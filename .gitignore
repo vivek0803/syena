@@ -13,3 +13,4 @@ frontend/dist/
 frontend/node_modules/
 deploy/syena-local.conf
 windows/setup-log.txt
+windows/.db-ready

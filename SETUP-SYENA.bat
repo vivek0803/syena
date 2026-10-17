@@ -26,9 +26,10 @@ echo  STEP 2 of 5 - Saving the laptop setup to GitHub
 echo ============================================================
 git config user.email >nul 2>&1 || git config user.email "kurisettivivek@gmail.com"
 git config user.name >nul 2>&1 || git config user.name "Vivek"
+git remote get-url origin >nul 2>&1 || git remote add origin https://github.com/vivek0803/syena.git
 git add .gitignore backend deploy windows SETUP-SYENA.bat
-git commit -q -m "Laptop setup: Telegram polling, local compose, Windows scripts"
-git push >> %LOG% 2>&1 && (echo Pushed to GitHub. & echo push ok >> %LOG%) || (echo GitHub push skipped - not needed to run Syena. & echo push failed >> %LOG%)
+git diff --cached --quiet || git commit -q -m "Laptop setup: Telegram polling, local compose, Windows scripts"
+git push -u origin main >> %LOG% 2>&1 && (echo Pushed to GitHub. & echo push ok >> %LOG%) || (echo GitHub push skipped - not needed to run Syena. & echo push failed >> %LOG%)
 
 echo.
 echo ============================================================
@@ -41,7 +42,7 @@ echo    SYENA_TELEGRAM_BOT_TOKEN  (from @BotFather)
 echo    SYENA_ANTHROPIC_API_KEY   (optional - leave empty for now if you like)
 echo Do not change the long values that are already filled in.
 echo SAVE (Ctrl+S) and CLOSE Notepad to continue.
-notepad deploy\syena-local.conf
+findstr /r /c:"^SYENA_KITE_API_KEY=." deploy\syena-local.conf >nul && (echo Keys already filled in - skipping Notepad.) || notepad deploy\syena-local.conf
 findstr /r /c:"^SYENA_KITE_API_KEY=." deploy\syena-local.conf >nul && echo kite key set >> %LOG% || (echo NOTE: Kite key is empty - Syena will start, but Connect Zerodha will not work yet. & echo kite key empty >> %LOG%)
 findstr /r /c:"^SYENA_TELEGRAM_BOT_TOKEN=." deploy\syena-local.conf >nul && echo telegram set >> %LOG% || (echo NOTE: Telegram token is empty - no Telegram alerts yet. & echo telegram empty >> %LOG%)
 
@@ -51,10 +52,20 @@ echo  STEP 4 of 5 - Building and starting Syena (first time 10-20 min)
 echo ============================================================
 powershell -NoProfile -Command "$ErrorActionPreference='Continue'; & cmd /c '%COMPOSE% --progress plain build 2>&1' | Tee-Object -FilePath '%LOG%' -Append; exit $LASTEXITCODE"
 if errorlevel 1 goto fail
+if not exist windows\.db-ready (
+  echo First run: creating a fresh empty database...
+  %COMPOSE% down -v >> %LOG% 2>&1
+)
 %COMPOSE% up -d db >> %LOG% 2>&1 || goto fail
 echo Preparing the database...
-timeout /t 8 /nobreak >nul
+set TRIES=0
+:waitdb
+timeout /t 3 /nobreak >nul
+set /a TRIES+=1
+%COMPOSE% exec -T db pg_isready -U syena -d syena >nul 2>&1
+if errorlevel 1 (if %TRIES% LSS 40 goto waitdb)
 %COMPOSE% run --rm api alembic upgrade head >> %LOG% 2>&1 || goto fail
+echo ok> windows\.db-ready
 %COMPOSE% up -d >> %LOG% 2>&1 || goto fail
 echo started ok >> %LOG%
 echo Syena is running at http://127.0.0.1:8080  (PAPER mode)
