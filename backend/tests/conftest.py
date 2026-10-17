@@ -55,7 +55,11 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def engine(tmp_path):
-    eng = make_engine(f"sqlite:///{tmp_path}/test.db")
+    # Set SYENA_TEST_DATABASE_URL=postgresql+psycopg://... to run the whole suite against Postgres.
+    url = os.environ.get("SYENA_TEST_DATABASE_URL") or f"sqlite:///{tmp_path}/test.db"
+    eng = make_engine(url)
+    if not url.startswith("sqlite"):
+        Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     dbmod.set_engine(eng)
     auth_service.ip_limiter.reset()
