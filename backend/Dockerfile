@@ -1,6 +1,7 @@
 FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 TZ=Asia/Kolkata
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata curl && rm -rf /var/lib/apt/lists/*
+# build tools: some dependencies have no prebuilt wheels for Arm (Oracle Ampere) and compile on install
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata curl build-essential libffi-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 COPY backend/syena /app/backend/syena

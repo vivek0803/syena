@@ -70,6 +70,10 @@ SYENA_TEST_DATABASE_URL=postgresql+psycopg://user@host/db pytest   # same suite 
 
 ## Deploy to your domain
 
+No domain or paid server? A free Oracle Cloud Always Free server (Mumbai/Hyderabad) plus a free DuckDNS name works
+exactly the same way: set `SYENA_DOMAIN` to e.g. `vivek-syena.duckdns.org`. The steps below apply unchanged.
+
+
 **1. Server.** Any Linux VPS in an India region with a **static public IP** (e.g. AWS Mumbai with an Elastic IP,
 DigitalOcean Bangalore with a reserved IP). Install Docker and the Compose plugin. Open only ports 22, 80 and 443.
 
