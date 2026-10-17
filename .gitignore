@@ -10,3 +10,4 @@ __pycache__/
 .env
 node_modules/
 frontend/dist/
+frontend/node_modules/

@@ -50,7 +50,7 @@ def dashboard(db: Session = Depends(get_db)):
     opens = list(db.scalars(select(Trade).where(Trade.status == TradeStatus.OPEN).order_by(Trade.created_at.desc())))
     decisions_today = dict((k.value, v) for k, v in db.execute(
         select(Decision.type, func.count()).where(Decision.ts >= start).group_by(Decision.type)).all())
-    recent = list(db.scalars(select(Decision).order_by(Decision.id.desc()).limit(12)))
+    recent = list(db.scalars(select(Decision).order_by(Decision.ts.desc(), Decision.id.desc()).limit(12)))
     w = get_wallet(db)
     heartbeats = {h.name: {"ts": h.ts.isoformat(), "age_s": int((now - h.ts).total_seconds()), "detail": h.detail}
                   for h in db.scalars(select(WorkerHeartbeat))}
@@ -97,7 +97,7 @@ def decisions(type: str | None = None, symbol: str | None = None, source: str | 
         q = q.where(Decision.mode == mode.upper())
     if before_id:
         q = q.where(Decision.id < before_id)
-    rows = db.scalars(q.order_by(Decision.id.desc()).limit(min(limit, 500)))
+    rows = db.scalars(q.order_by(Decision.ts.desc(), Decision.id.desc()).limit(min(limit, 500)))
     return [ser(d, exclude=("inputs_json", "similar_trades")) for d in rows]
 
 

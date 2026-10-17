@@ -1,0 +1,45 @@
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/figtree";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body, #root { min-height: 100%; }
+html, body { overflow-x: hidden; }
+.grid > * { min-width: 0; }
+body {
+  background: #141923;
+  color: #ECE6D8;
+  font-family: "Figtree Variable", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid #E8A33D; outline-offset: 2px; border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+@layer components {
+  .panel { @apply bg-dusk-panel border border-dusk-line rounded-panel; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-saffron text-dusk hover:bg-saffron-deep; }
+  .btn-ghost { @apply btn border border-dusk-line text-parch hover:bg-dusk-raised; }
+  .btn-danger { @apply btn bg-loss text-dusk hover:brightness-110; }
+  .input { @apply w-full rounded-lg bg-dusk border border-dusk-line px-3 py-2 text-parch placeholder:text-mute/70 focus:border-saffron focus:outline-none; }
+  .label { @apply block text-sm text-parch-dim mb-1; }
+  .th { @apply text-left font-medium text-mute text-[13px] px-3 py-2 whitespace-nowrap; }
+  .td { @apply px-3 py-2 align-top border-t border-dusk-line/70 whitespace-nowrap; }
+  .h1 { @apply font-display text-[28px] leading-tight font-semibold tracking-tight text-parch; }
+  .h2 { @apply font-display text-lg font-semibold text-parch; }
+}
+
+/* the decision trail: a vertical path of gates */
+.trail { position: relative; padding-left: 22px; }
+.trail::before { content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px; width: 2px; background: #2F384C; }
+.trail-node { position: relative; }
+.trail-node::before { content: ""; position: absolute; left: -19px; top: 7px; width: 10px; height: 10px; border-radius: 99px; background: #141923; border: 2px solid currentColor; }
+.trail-node.pass { color: #56B488; }
+.trail-node.fail { color: #E36B5D; }
+.trail-node.fail::before { background: #E36B5D; }
+.trail-node.end::before { width: 14px; height: 14px; left: -21px; top: 5px; background: currentColor; }

@@ -79,6 +79,42 @@ def reset_totp(username: str = typer.Option(..., prompt=True)):
         typer.echo("TOTP secret rotated.")
 
 
+@app.command("seed-demo")
+def seed_demo():
+    """Fill a DEV database with clearly synthetic PAPER data to explore every page."""
+    from syena.config import get_settings
+    from syena.seed import seed
+
+    if get_settings().env != "dev":
+        raise typer.Exit("seed-demo only runs with SYENA_ENV=dev")
+    with SessionLocal() as db:
+        typer.echo(seed(db))
+
+
+@app.command("telegram-webhook")
+def telegram_webhook(url: str = typer.Argument(..., help="https://<domain>/api/telegram/webhook")):
+    """Register the Telegram webhook (uses SYENA_TELEGRAM_BOT_TOKEN and SYENA_TELEGRAM_WEBHOOK_SECRET)."""
+    from syena.notify import telegram
+
+    typer.echo(telegram.set_webhook(url))
+
+
+@app.command("eval-gate")
+def eval_gate():
+    """CI gate: run the deterministic parser evals and fail if below thresholds."""
+    from syena import settings_store
+    from syena.algos import parser
+    from syena.evals import parser_eval
+
+    metrics, rows = parser_eval.evaluate_cases(parser_eval.load_cases(), lambda t: parser.parse(t, use_llm=False))
+    typer.echo(metrics)
+    for r in rows:
+        if not r["ok"]:
+            typer.echo(f"FAIL {r['case']['id']}: {r['case']['text']!r} -> {r['info']}")
+    if not parser_eval.thresholds_pass(metrics, settings_store.DEFAULTS["evals"]):
+        raise typer.Exit(1)
+
+
 @app.command("gen-key")
 def gen_key():
     """Print a fresh Fernet key for SYENA_ENCRYPTION_KEY."""
