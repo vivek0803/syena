@@ -1,0 +1,21 @@
+# These MUST return a clarification, never a guessed rule.
+- {id: clar-01, text: "buy when sma crosses above ema", clarify: true}
+- {id: clar-02, text: "buy when the stock is oversold", clarify: true}
+- {id: clar-03, text: "buy on a strong breakout", clarify: true}
+- {id: clar-04, text: "buy when macd crossover", clarify: true}
+- {id: clar-05, text: "buy when price touches the bollinger band", clarify: true}
+- {id: clar-06, text: "buy when there is high volume", clarify: true}
+- {id: clar-07, text: "buy when ichimoku cloud turns green", clarify: true}
+- {id: clar-08, text: "buy when fibonacci 61.8% retracement holds", clarify: true}
+- {id: clar-09, text: "short when rsi > 80", clarify: true}
+- {id: clar-10, text: "buy when OBV rises", clarify: true}
+- {id: clar-11, text: "buy when price equals 1000", clarify: true}
+- {id: clar-12, text: "", clarify: true}
+- {id: clar-13, text: "buy when momentum is good", clarify: true}
+- {id: clar-14, text: "buy when close is above the bollinger band", clarify: true}
+- {id: clar-15, text: "buy after good quarterly earnings", clarify: true}
+- {id: clar-16, text: "buy when ema is above 200", clarify: true}
+- {id: clar-17, text: "sell when rsi > 70", clarify: true}
+- {id: clar-18, text: "buy when the trend is up", clarify: true}
+- {id: clar-19, text: "buy when parabolic sar flips", clarify: true}
+- {id: clar-20, text: "buy when cci < -100", clarify: true}

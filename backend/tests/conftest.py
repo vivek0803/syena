@@ -60,6 +60,7 @@ def engine(tmp_path):
     dbmod.set_engine(eng)
     auth_service.ip_limiter.reset()
     saved = list(mode_service._live_preconditions)
+    mode_service._live_preconditions.clear()  # tests opt in to preconditions explicitly
     yield eng
     mode_service._live_preconditions[:] = saved
     eng.dispose()
@@ -103,3 +104,81 @@ def authed(client, clock):
     assert r.status_code == 200, r.text
     client.headers.update({"X-CSRF-Token": r.json()["csrf_token"], **ORIGIN})
     return client
+
+
+# ---------------------------------------------------------------- market data + fake LLM helpers
+import json as _json  # noqa: E402
+
+import numpy as _np  # noqa: E402
+import pandas as _pd  # noqa: E402
+
+from syena.ai import llm as _llm  # noqa: E402
+from syena.market.data import FrameMarketData  # noqa: E402
+
+
+def make_candles(n=400, freq="B", start="2025-01-01", seed=3, drift=0.0006, vol=0.012, price=1500.0):
+    rng = _np.random.default_rng(seed)
+    if freq == "B":
+        idx = _pd.date_range(start, periods=n, freq="B", tz="Asia/Kolkata").tz_convert("UTC") + _pd.Timedelta(hours=10)
+    else:
+        idx = _pd.date_range(start, periods=n, freq=freq, tz="UTC")
+    c = price * _np.exp(_np.cumsum(rng.normal(drift, vol, n)))
+    o = c * (1 + rng.normal(0, 0.002, n))
+    h = _np.maximum(o, c) * (1 + _np.abs(rng.normal(0, 0.004, n)))
+    lo = _np.minimum(o, c) * (1 - _np.abs(rng.normal(0, 0.004, n)))
+    return _pd.DataFrame({"open": o, "high": h, "low": lo, "close": c, "volume": rng.integers(1e5, 1e6, n).astype(float)}, index=idx)
+
+
+@pytest.fixture
+def md():
+    frames = {(s, "day"): make_candles(seed=i + 1) for i, s in enumerate(["INFY", "TCS", "RELIANCE"])}
+    frames.update({(s, "15minute"): make_candles(n=800, freq="15min", start="2026-09-01 03:45", seed=i + 11)
+                   for i, s in enumerate(["INFY", "TCS", "RELIANCE"])})
+    return FrameMarketData(frames, {"NIFTY": {"last": 25000, "prev_close": 24900, "change_pct": 0.4},
+                                    "VIX": {"last": 13.5, "prev_close": 14, "change_pct": -3.5}})
+
+
+class FakeLLM:
+    """Routes by prompt type; tests override fields via attributes."""
+
+    def __init__(self):
+        self.analysis = {"action": "BUY", "confidence": 82, "sentiment": 0.6, "summary": "Large order win.",
+                         "reasoning": "Order win [ID] is material.", "cited": [], "risks": [], "technicals_agree": True}
+        self.triage = {"relevant": True, "symbols": ["INFY", "HACKED"], "event_type": "order_win", "reason": "deal"}
+        self.review = {"classification": "bad-entry", "decision_quality": "unsound", "right": [], "wrong": [{"point": "x", "evidence": "y"}],
+                       "counterfactual": {}, "proposed_lesson": None, "hindsight_flags": [], "summary": "bad entry"}
+        self.judge = {"groundedness": 4, "consistency": 5, "no_hallucination": 4, "unsupported_claims": [], "comment": "ok"}
+        self.parser = {"status": "clarify", "question": "?", "reason": "ambiguous"}
+        self.prompts: list[str] = []
+
+    def __call__(self, model, system, user):
+        self.prompts.append(user)
+        if system.startswith("You triage"):
+            return _json.dumps(self.triage)
+        if system.startswith("You are a cautious equity analyst"):
+            return "```json\n" + _json.dumps(self.analysis) + "\n```"
+        if system.startswith("You are a post-trade reviewer"):
+            return _json.dumps(self.review)
+        if system.startswith("You grade"):
+            return _json.dumps(self.judge)
+        if system.startswith("You convert"):
+            return _json.dumps(self.parser)
+        if system.startswith("You review a proposed manual"):
+            return _json.dumps({"verdict": "caution", "issues": [], "suggested": {}, "summary": "ok"})
+        return _json.dumps({"text": "pattern"})
+
+
+@pytest.fixture
+def fake_llm():
+    f = FakeLLM()
+    _llm.set_backend(_llm.FakeBackend(f))
+    yield f
+    _llm.set_backend(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm(monkeypatch):
+    # Never call the real API from tests: unavailable unless a test installs the fake backend.
+    if _llm._backend is None:
+        monkeypatch.setattr(_llm, "available", lambda: _llm._backend is not None)
+    yield

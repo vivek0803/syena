@@ -1,0 +1,46 @@
+- id: exit-01
+  text: "buy when sma 20 crosses above sma 50, sell when sma 20 crosses below sma 50"
+  entry: cross_above(sma(20), sma(50))
+  exit: cross_below(sma(20), sma(50))
+- id: exit-02
+  text: "buy when rsi < 30, sell when rsi > 70, stop loss 2%, target 5%"
+  entry: lt(rsi(14), 30)
+  exit: gt(rsi(14), 70)
+  stop_loss: {type: pct, value: 2}
+  target: {type: pct, value: 5}
+- id: exit-03
+  text: "buy when close > vwap; exit when close < vwap"
+  entry: gt(close, vwap)
+  exit: lt(close, vwap)
+- id: exit-04
+  text: "buy when macd bullish crossover, stop 1.5 atr, target 3 atr"
+  entry: cross_above(macd(12,26,9).macd, macd(12,26,9).signal)
+  stop_loss: {type: atr, mult: 1.5}
+  target: {type: atr, mult: 3}
+- id: exit-05
+  text: "buy when ema(9) crosses above ema(21) and exit when ema(9) crosses below ema(21) with sl 1%"
+  entry: cross_above(ema(9), ema(21))
+  exit: cross_below(ema(9), ema(21))
+  stop_loss: {type: pct, value: 1}
+- id: exit-06
+  text: "Enter long when close crosses above upper band; sell when close crosses below middle band"
+  entry: cross_above(close, bb(20,2).upper)
+  exit: cross_below(close, bb(20,2).middle)
+- id: exit-07
+  text: "buy when rsi < 30 target 4% stoploss 1.5%"
+  entry: lt(rsi(14), 30)
+  stop_loss: {type: pct, value: 1.5}
+  target: {type: pct, value: 4}
+- id: exit-08
+  text: "buy when supertrend turns bullish, sell when supertrend turns bearish"
+  entry: cross_above(st(10,3).direction, 0)
+  exit: cross_below(st(10,3).direction, 0)
+- id: exit-09
+  text: "buy when close > sma 20, sell if close < sma 20, take profit 6%"
+  entry: gt(close, sma(20))
+  exit: lt(close, sma(20))
+  target: {type: pct, value: 6}
+- id: exit-10
+  text: "buy when macd(8,21,5) crosses above signal, exit when macd(8,21,5) crosses below signal"
+  entry: cross_above(macd(8,21,5).macd, macd(8,21,5).signal)
+  exit: cross_below(macd(8,21,5).macd, macd(8,21,5).signal)

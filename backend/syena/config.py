@@ -36,9 +36,30 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     login_ip_rate_per_minute: int = 10
 
+    # Brokers / data
+    kite_api_key: str = ""
+    kite_api_secret: SecretStr = Field(default=SecretStr(""))
+    angel_api_key: str = ""
+
+    # AI
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""))
+
+    # Telegram
+    telegram_bot_token: SecretStr = Field(default=SecretStr(""))
+    telegram_chat_id: str = ""
+    telegram_webhook_secret: SecretStr = Field(default=SecretStr(""))
+
+    # Golden eval datasets (defaults to <repo>/evals)
+    evals_dir: str = ""
+
     # Logging
     log_level: str = "INFO"
     log_to_db: bool = True
+
+    def secret_values(self) -> list[str]:
+        """All secret values, scrubbed from log output as a last line of defence."""
+        return [v.get_secret_value() for v in (self.encryption_key, self.kite_api_secret, self.anthropic_api_key,
+                                               self.telegram_bot_token, self.telegram_webhook_secret) if v.get_secret_value()]
 
 
 @lru_cache

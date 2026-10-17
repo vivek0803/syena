@@ -4,18 +4,24 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from syena import __version__
-from syena.api import auth, health, logs, mode
+from syena.api import admin, algos, auth, health, intel, logs, mode, portfolio, trading
 from syena.config import get_settings
 from syena.db import SessionLocal
 from syena.logging_setup import configure_logging
+from syena.ai.llm import BudgetExceeded, LLMUnavailable
+from syena.market.kite import KiteNotConnected
 from syena.services import mode as mode_service
+from syena.services.live_checks import register_live_checks
 
 log = logging.getLogger("syena.app")
 
 # Routes reachable without a session. Everything else must 401.
 PUBLIC_PATHS = {"/health", "/api/auth/login"}
+# Public but separately verified: one-time nonce (Kite redirect) / secret header + chat id (Telegram).
+VERIFIED_PATHS = {"/kite/callback", "/api/telegram/webhook"}
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -33,6 +39,8 @@ SECURITY_HEADERS = {
 
 def create_app(run_startup: bool = True) -> FastAPI:
     settings = get_settings()
+    if run_startup:
+        register_live_checks()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -40,7 +48,7 @@ def create_app(run_startup: bool = True) -> FastAPI:
             configure_logging(
                 settings.log_level,
                 to_db=settings.log_to_db,
-                secrets=[settings.encryption_key.get_secret_value()],
+                secrets=settings.secret_values(),
             )
             with SessionLocal() as db:
                 mode_service.on_startup(db)
@@ -79,6 +87,30 @@ def create_app(run_startup: bool = True) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(mode.router)
     app.include_router(logs.router)
+    app.include_router(trading.router)
+    app.include_router(trading.public_router)
+    app.include_router(algos.router)
+    app.include_router(intel.router)
+    app.include_router(portfolio.router)
+    app.include_router(admin.router)
+    app.include_router(admin.public_router)
+
+    @app.exception_handler(KiteNotConnected)
+    async def _kite(_, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(LLMUnavailable)
+    async def _nollm(_, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(BudgetExceeded)
+    async def _budget(_, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=429)
+
+    @app.exception_handler(ValueError)
+    async def _value(_, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
     return app
 
 

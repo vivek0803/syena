@@ -3,7 +3,7 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from syena.db import utcnow
-from syena.main import PUBLIC_PATHS
+from syena.main import PUBLIC_PATHS, VERIFIED_PATHS
 from syena.models import LoginAudit, User, UserSession
 from syena.security.sessions import COOKIE_NAME
 from tests.conftest import ORIGIN, PASSWORD, do_login
@@ -13,13 +13,20 @@ def test_every_non_public_route_requires_auth(client):
     # Enumerate via the OpenAPI schema so nested/included routers are all covered.
     checked = 0
     for path, ops in client.app.openapi()["paths"].items():
-        if path in PUBLIC_PATHS:
+        if path in PUBLIC_PATHS or path in VERIFIED_PATHS:
             continue
         for method in ops:
             r = client.request(method.upper(), path, headers=ORIGIN, json={})
             assert r.status_code == 401, f"{method} {path} returned {r.status_code}"
             checked += 1
-    assert checked >= 8
+    assert checked >= 60
+
+
+def test_verified_public_paths_reject_without_proof(client):
+    r = client.get("/kite/callback?request_token=x&status=success&nonce=forged", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/?kite=invalid"
+    r = client.post("/api/telegram/webhook", json={"message": {"chat": {"id": 1}, "text": "/halt"}})
+    assert r.status_code == 403
 
 
 def test_login_success_sets_hardened_cookie(client, clock):

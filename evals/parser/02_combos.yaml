@@ -1,0 +1,45 @@
+- id: combo-01
+  text: "price closes below lower Bollinger band and RSI < 30"
+  entry: and(lt(close, bb(20,2).lower), lt(rsi(14), 30))
+- id: combo-02
+  text: "MACD bullish crossover with volume above 20-day average"
+  entry: and(cross_above(macd(12,26,9).macd, macd(12,26,9).signal), gt(volume, vol_sma(20)))
+- id: combo-03
+  text: "buy when MACD crosses above signal line and RSI is above 50"
+  entry: and(cross_above(macd(12,26,9).macd, macd(12,26,9).signal), gt(rsi(14), 50))
+- id: combo-04
+  text: "buy when rsi < 30 or close < lower bb"
+  entry: or(lt(rsi(14), 30), lt(close, bb(20,2).lower))
+- id: combo-05
+  text: "buy when (rsi < 30 or close < lower bb) and adx > 20"
+  entry: and(or(lt(rsi(14), 30), lt(close, bb(20,2).lower)), gt(adx(14), 20))
+- id: combo-06
+  text: "buy when ema 20 > ema 50 and not rsi > 70"
+  entry: and(gt(ema(20), ema(50)), not(gt(rsi(14), 70)))
+- id: combo-07
+  text: "buy when rsi is between 40 and 60 and close > sma 50"
+  entry: and(gt(rsi(14), 40), lt(rsi(14), 60), gt(close, sma(50)))
+- id: combo-08
+  text: "buy when close > vwap and supertrend is bullish"
+  entry: and(gt(close, vwap), gt(st(10,3).direction, 0))
+- id: combo-09
+  text: "buy when macd histogram > 0 and close above ema 21"
+  entry: and(gt(macd(12,26,9).hist, 0), gt(close, ema(21)))
+- id: combo-10
+  text: "buy when sma 20 crosses above sma 50 and volume is above average volume"
+  entry: and(cross_above(sma(20), sma(50)), gt(volume, vol_sma(20)))
+- id: combo-11
+  text: "buy when price above sma 200 and below sma 50"
+  entry: and(gt(close, sma(200)), lt(close, sma(50)))
+- id: combo-12
+  text: "buy when stoch k < 20 and stoch k crosses above stoch d"
+  entry: and(lt(stoch(14,3,3).k, 20), cross_above(stoch(14,3,3).k, stoch(14,3,3).d))
+- id: combo-13
+  text: "buy when rsi < 35, close > sma 200"
+  entry: and(lt(rsi(14), 35), gt(close, sma(200)))
+- id: combo-14
+  text: "buy when ema 50 > ema 200 && rsi 14 < 40"
+  entry: and(gt(ema(50), ema(200)), lt(rsi(14), 40))
+- id: combo-15
+  text: "buy when adx > 25 or supertrend is bullish"
+  entry: or(gt(adx(14), 25), gt(st(10,3).direction, 0))

@@ -1,0 +1,24 @@
+- id: typo-01
+  text: "buy when emaa 20 crosess aboev ema 50"
+  entry: cross_above(ema(20), ema(50))
+- id: typo-02
+  text: "buy wen price closes bellow lower bolinger band and rsi < 30"
+  entry: and(lt(close, bb(20,2).lower), lt(rsi(14), 30))
+- id: typo-03
+  text: "buy when vwap is belwo close"
+  entry: lt(vwap, close)
+- id: typo-04
+  text: "buy when supertrnd is bullish"
+  entry: gt(st(10,3).direction, 0)
+- id: typo-05
+  text: "BUY WHEN SMA20 CROSSES ABOVE SMA50"
+  entry: cross_above(sma(20), sma(50))
+- id: typo-06
+  text: "buy when  rsi   <  30 "
+  entry: lt(rsi(14), 30)
+- id: typo-07
+  text: "buy when stochastic k crossess above stochastic d"
+  entry: cross_above(stoch(14,3,3).k, stoch(14,3,3).d)
+- id: typo-08
+  text: "buy when histogram is greater than 0"
+  entry: gt(macd(12,26,9).hist, 0)

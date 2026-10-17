@@ -1,0 +1,63 @@
+# Plain comparisons and crossovers. DSL: gt/ge/lt/le, cross_above/cross_below, and/or/not,
+# sma(n) ema(n) wma(n) rsi(n) atr(n) adx(n) macd(f,s,sig).macd|signal|hist bb(n,std).upper|middle|lower
+# stoch(k,d,smooth).k|d st(n,mult).line|direction vol_sma(n) vwap open high low close volume
+- id: plain-01
+  text: "buy when SMA 20 crosses above SMA 50"
+  entry: cross_above(sma(20), sma(50))
+- id: plain-02
+  text: "ema(50) > ema(200)"
+  entry: gt(ema(50), ema(200))
+- id: plain-03
+  text: "buy when rsi < 30"
+  entry: lt(rsi(14), 30)
+- id: plain-04
+  text: "buy when RSI(14) is below 25"
+  entry: lt(rsi(14), 25)
+- id: plain-05
+  text: "buy if close is above vwap"
+  entry: gt(close, vwap)
+- id: plain-06
+  text: "buy when price is greater than 2500"
+  entry: gt(close, 2500)
+- id: plain-07
+  text: "buy when ema 9 crosses above ema 21"
+  entry: cross_above(ema(9), ema(21))
+- id: plain-08
+  text: "buy when the 50 day moving average is above the 200 day moving average"
+  entry: gt(sma(50), sma(200))
+- id: plain-09
+  text: "Buy when ADX is above 25"
+  entry: gt(adx(14), 25)
+- id: plain-10
+  text: "buy when wma 10 > wma 30"
+  entry: gt(wma(10), wma(30))
+- id: plain-11
+  text: "buy when close crosses above sma 200"
+  entry: cross_above(close, sma(200))
+- id: plain-12
+  text: "buy when price crosses below the lower bollinger band"
+  entry: cross_below(close, bb(20,2).lower)
+- id: plain-13
+  text: "buy when stochastic %k crosses above %d"
+  entry: cross_above(stoch(14,3,3).k, stoch(14,3,3).d)
+- id: plain-14
+  text: "buy when supertrend is bullish"
+  entry: gt(st(10,3).direction, 0)
+- id: plain-15
+  text: "buy when supertrend turns bullish"
+  entry: cross_above(st(10,3).direction, 0)
+- id: plain-16
+  text: "buy when rsi(7) >= 80"
+  entry: ge(rsi(7), 80)
+- id: plain-17
+  text: "buy when atr 14 > 50"
+  entry: gt(atr(14), 50)
+- id: plain-18
+  text: "golden cross"
+  entry: cross_above(sma(50), sma(200))
+- id: plain-19
+  text: "buy when price is over 1,500"
+  entry: gt(close, 1500)
+- id: plain-20
+  text: "buy when close is above upper bollinger band"
+  entry: gt(close, bb(20,2).upper)

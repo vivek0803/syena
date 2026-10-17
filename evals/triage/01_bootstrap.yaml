@@ -1,0 +1,23 @@
+# Bootstrap labelled set (synthetic headlines written for Syena). Add your own labels from the News Feed page.
+- {id: t01, title: "Infosys wins $1.5 billion multi-year deal from European bank", relevant: true, symbols: [INFY]}
+- {id: t02, title: "TCS Q2 net profit rises 9% year-on-year, beats street estimates", relevant: true, symbols: [TCS]}
+- {id: t03, title: "RBI keeps repo rate unchanged at policy meeting", relevant: false, symbols: []}
+- {id: t04, title: "HDFC Bank board approves fund raise of Rs 50,000 crore via bonds", relevant: true, symbols: [HDFCBANK]}
+- {id: t05, title: "Monsoon rainfall 6% above normal so far, says IMD", relevant: false, symbols: []}
+- {id: t06, title: "SEBI imposes penalty on Adani Enterprises over disclosure lapses", relevant: true, symbols: [ADANIENT]}
+- {id: t07, title: "Top 10 stocks to watch today: analysts' picks", relevant: false, symbols: []}
+- {id: t08, title: "Tata Motors JLR wholesales fall 12% in September quarter", relevant: true, symbols: [TATAMOTORS]}
+- {id: t09, title: "Reliance Industries to demerge new energy business, board meets next week", relevant: true, symbols: [RELIANCE]}
+- {id: t10, title: "Sensex ends flat as investors await US inflation data", relevant: false, symbols: []}
+- {id: t11, title: "ICICI Bank and Axis Bank raise fixed deposit rates by 25 bps", relevant: false, symbols: []}
+- {id: t12, title: "Sun Pharma receives USFDA warning letter for Halol plant", relevant: true, symbols: [SUNPHARMA]}
+- {id: t13, title: "Maruti Suzuki recalls 18,000 cars over seat belt defect", relevant: true, symbols: [MARUTI]}
+- {id: t14, title: "Gold prices hit record high on safe-haven demand", relevant: false, symbols: []}
+- {id: t15, title: "Bharti Airtel raises mobile tariffs by up to 15% across plans", relevant: true, symbols: [BHARTIARTL]}
+- {id: t16, title: "Larsen & Toubro bags 'mega' order from Middle East client", relevant: true, symbols: [LT]}
+- {id: t17, title: "ITC hotel business listing date announced after demerger", relevant: true, symbols: [ITC]}
+- {id: t18, title: "Wipro CEO resigns with immediate effect; interim chief named", relevant: true, symbols: [WIPRO]}
+- {id: t19, title: "FIIs net sellers for fifth straight session", relevant: false, symbols: []}
+- {id: t20, title: "State Bank of India Q2 profit jumps on lower provisions; asset quality improves", relevant: true, symbols: [SBIN]}
+- {id: t21, title: "Interview: fund manager says markets fairly valued", relevant: false, symbols: []}
+- {id: t22, title: "Titan Company Q2 jewellery sales growth slows to 8%", relevant: true, symbols: [TITAN]}
