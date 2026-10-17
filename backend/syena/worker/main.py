@@ -249,6 +249,15 @@ def weekly(db):
     return {"proposed": codes}
 
 
+@job("telegram_poll")
+def telegram_poll(db):
+    from syena.notify import dispatch, telegram
+
+    if not telegram.enabled():
+        return {"skipped": "telegram not configured"}
+    return {"handled": dispatch.poll_once(db)}
+
+
 @job("instruments")
 def instruments(db):
     if kite_session.active_token(db):
@@ -273,6 +282,15 @@ def build_scheduler() -> BlockingScheduler:
     s.add_job(summary_job, "cron", hour=15, minute=45, day_of_week="mon-fri", id="daily_summary")
     s.add_job(weekly, "cron", day_of_week="sat", hour=10, minute=0, id="weekly")
     s.add_job(instruments, "cron", hour=8, minute=30, day_of_week="mon-fri", id="instruments")
+    if get_settings().telegram_delivery == "polling":
+        from syena.notify import dispatch, telegram
+
+        if telegram.enabled():
+            try:
+                dispatch.start_polling()
+            except Exception as e:
+                log.warning("could not clear Telegram webhook", extra={"error": str(e)})
+        s.add_job(telegram_poll, "interval", seconds=4, id="telegram_poll")
     return s
 
 

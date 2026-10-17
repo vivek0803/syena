@@ -112,3 +112,22 @@ def test_live_sell_needs_second_tap(db, user, tg):
     assert res == "confirming" and not called
     res = telegram.handle_update(db, _update(f"live:ok:{a.id}"), lambda *x: called.append(x) or "sold", reject_sell, lambda *_: None, status_text)
     assert res == "approved" and called
+
+
+def test_polling_dispatches_only_your_chat_and_advances_offset(db, user, tg):
+    from syena.notify import dispatch
+
+    updates = [{"update_id": 10, "message": {"chat": {"id": 42}, "text": "/halt from poll"}},
+               {"update_id": 11, "message": {"chat": {"id": 666}, "text": "/halt intruder"}}]
+    calls = []
+
+    def fake_api(method, payload, http=None):
+        calls.append((method, payload))
+        return updates if method == "getUpdates" and payload["offset"] == 0 else [] if method == "getUpdates" else {"message_id": 1}
+
+    assert dispatch.poll_once(db, api=fake_api) == 1
+    st = mode_service.get_state(db)
+    assert st.halted and "from poll" in st.halt_reason
+    dispatch.poll_once(db, api=fake_api)
+    offsets = [p["offset"] for m, p in calls if m == "getUpdates"]
+    assert offsets == [0, 12]

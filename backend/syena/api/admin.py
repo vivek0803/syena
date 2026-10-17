@@ -95,12 +95,6 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(400, "bad body")
     if not telegram.verify_webhook(request.headers.get("x-telegram-bot-api-secret-token"), telegram.chat_id_of(update)):
         raise HTTPException(403, "forbidden")
-    md = KiteMarketData(db) if kite_session.active_token(db) else None
-    result = telegram.handle_update(
-        db, update,
-        approve_sell=lambda d, a, t: approve_sell(d, a, t, md),
-        reject_sell=reject_sell,
-        halt=lambda d, reason: mode_service.halt(d, reason, actor="telegram"),
-        status_text=status_text,
-    )
-    return {"ok": True, "result": result}
+    from syena.notify.dispatch import dispatch
+
+    return {"ok": True, "result": dispatch(db, update)}

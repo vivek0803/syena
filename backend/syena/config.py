@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr = Field(default=SecretStr(""))
     telegram_chat_id: str = ""
     telegram_webhook_secret: SecretStr = Field(default=SecretStr(""))
+    # webhook: Telegram calls https://<domain>/api/telegram/webhook (server)
+    # polling: the worker fetches updates every few seconds (laptop, no public URL needed)
+    telegram_delivery: str = "webhook"
 
     # Golden eval datasets (defaults to <repo>/evals)
     evals_dir: str = ""

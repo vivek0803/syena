@@ -1,0 +1,88 @@
+# Syena on your own computer (Docker Desktop). Open http://127.0.0.1:8080
+# PAPER trading works from any network. LIVE orders need a registered static IP, i.e. a server.
+name: syena-local
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  image: syena-backend:latest
+  env_file: syena-local.conf
+  environment:
+    SYENA_ENV: prod
+    SYENA_COOKIE_SECURE: "false"
+    SYENA_TRUST_PROXY_HEADERS: "true"
+    SYENA_PUBLIC_ORIGIN: http://127.0.0.1:8080
+    SYENA_TELEGRAM_DELIVERY: polling
+    SYENA_DATABASE_URL: postgresql+psycopg://syena:${POSTGRES_PASSWORD}@db:5432/syena
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+  networks: [internal]
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: syena
+      POSTGRES_USER: syena
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/syena-local.conf}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syena -d syena"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [internal]
+
+  api:
+    <<: *backend
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "syena.worker.main"]
+    healthcheck:
+      disable: true
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Caddy.Dockerfile
+      args:
+        CADDYFILE: deploy/Caddyfile.local
+    image: syena-web-local:latest
+    ports: ["127.0.0.1:8080:8080"]   # only this computer can reach it
+    depends_on: [api]
+    restart: unless-stopped
+    networks: [internal]
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?set BACKUP_PASSPHRASE in deploy/syena-local.conf}
+    volumes: [./backups:/backups]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache openssl >/dev/null
+        while true; do
+          f=/backups/syena-$$(date +%Y%m%d-%H%M).sql.gz.enc
+          pg_dump -h db -U syena syena | gzip | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -out "$$f" \
+            && echo "backup ok $$f" || echo "backup FAILED"
+          find /backups -name 'syena-*.enc' -mtime +14 -delete
+          sleep 86400
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [internal]
+
+networks:
+  internal: {}
+
+volumes:
+  pgdata: {}

@@ -1,0 +1,19 @@
+# Laptop settings for Syena. Copy to deploy/syena-local.conf (never commit it).
+POSTGRES_PASSWORD=
+BACKUP_PASSPHRASE=
+SYENA_ENCRYPTION_KEY=
+
+# Zerodha Kite Connect. In the Kite developer console set the redirect URL to:
+#   http://127.0.0.1:8080/kite/callback
+SYENA_KITE_API_KEY=
+SYENA_KITE_API_SECRET=
+
+# Optional
+SYENA_ANTHROPIC_API_KEY=
+SYENA_ANGEL_API_KEY=
+
+# Telegram (bot token from @BotFather, chat ID from @userinfobot)
+SYENA_TELEGRAM_BOT_TOKEN=
+SYENA_TELEGRAM_CHAT_ID=
+
+SYENA_LOG_LEVEL=INFO
