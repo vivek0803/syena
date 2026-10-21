@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Empty, ErrorNote, Json, Loading, Page, Panel, Pill, Trail, decisionTone } from "../components/ui";
+import AiVerdict from "../components/AiVerdict";
+import StockLink from "../components/StockLink";
+import { Empty, ErrorNote, Json, Loading, Page, Panel, Pill, Trail, decisionLabel, decisionTone } from "../components/ui";
 import { money, signed, tone, when } from "../lib/format";
 import { useApi } from "../lib/hooks";
 
-const types = ["", "PLACED", "REJECTED", "EXITED", "HELD", "SKIPPED"];
+const types = ["", "BUY", "SELL", "REJECTED", "ERROR", "EXITED"];
 
 export default function Decisions() {
   const { id } = useParams();
@@ -19,7 +21,7 @@ export default function Decisions() {
         <div className={`${id ? "hidden lg:block" : ""} space-y-3`}>
           <div className="flex flex-wrap gap-2">
             <select className="input w-auto" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })} aria-label="Decision type">
-              {types.map((t) => <option key={t} value={t}>{t ? t.toLowerCase() : "all types"}</option>)}
+              {types.map((t) => <option key={t} value={t}>{t ? t.toLowerCase() : "all outcomes"}</option>)}
             </select>
             <select className="input w-auto" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} aria-label="Source">
               {["", "algo", "news", "manual"].map((t) => <option key={t} value={t}>{t || "all sources"}</option>)}
@@ -35,7 +37,7 @@ export default function Decisions() {
                 <li key={x.id}>
                   <Link to={`/decisions/${x.id}`} className={`block border-t border-dusk-line/70 px-4 py-3 first:border-t-0 hover:bg-dusk-raised/50 ${String(x.id) === id ? "bg-dusk-raised" : ""}`}>
                     <div className="flex items-center gap-2">
-                      <Pill tone={decisionTone(x.type)}>{x.type.toLowerCase()}</Pill>
+                      <Pill tone={decisionTone(x.type, x.side)}>{decisionLabel(x)}</Pill>
                       <span className="font-semibold">{x.symbol}</span>
                       <span className="ml-auto text-[13px] text-mute">{when(x.ts)}</span>
                     </div>
@@ -69,10 +71,24 @@ function DecisionDetail({ id, onBack }: { id: string; onBack: () => void }) {
   return (
     <div className="space-y-4">
       <button className="btn-ghost lg:hidden" onClick={onBack}>Back to list</button>
-      <Panel title={<span className="flex flex-wrap items-center gap-2"><Pill tone={decisionTone(d.type)}>{d.type.toLowerCase()}</Pill>{d.symbol}</span>}
+      <Panel title={<span className="flex flex-wrap items-center gap-2"><Pill tone={decisionTone(d.type, d.side)}>{decisionLabel(d)}</Pill>{d.side === "SELL" && d.type === "PLACED" && <span className="text-[13px] text-mute">short, intraday</span>}<StockLink symbol={d.symbol} /></span>}
         aside={<span className="text-sm text-mute">{when(d.ts)} · {d.source} · {d.mode}</span>}>
         <p className="text-[17px] leading-relaxed">{d.summary}</p>
-        {d.confidence != null && (
+        {r.score_breakdown ? (
+          <div className="mt-3 rounded-lg bg-dusk p-3">
+            <div className="text-sm text-parch-dim">Weighted score used by the gate: <b className="text-lg text-parch">{r.weighted_score}</b></div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">{(["news", "technicals", "market"] as const).map((k) => {
+              const v = r.score_breakdown.parts[k], w = r.score_breakdown.weights[k];
+              return (
+                <div key={k} className="text-sm">
+                  <div className="flex justify-between"><span className="capitalize text-parch-dim">{k} <span className="text-mute">×{w}%</span></span><b className="tabular-nums">{v}</b></div>
+                  <div className="mt-1 h-1.5 rounded-full bg-dusk-line"><div className="h-full rounded-full bg-saffron" style={{ width: `${v}%` }} /></div>
+                  <div className="mt-0.5 text-[12px] text-mute">adds {(v * w / 100).toFixed(1)}</div>
+                </div>);
+            })}</div>
+            {r.model_confidence != null && r.score_breakdown.parts.news !== r.model_confidence && <p className="mt-2 text-[12px] text-mute">News: the AI said {r.model_confidence}, adjusted by lessons to {r.score_breakdown.parts.news}.</p>}
+          </div>
+        ) : d.confidence != null && (
           <p className="mt-2 text-parch-dim">Confidence used by the gate: <b className="text-parch">{d.confidence}</b>
             {r.model_confidence != null && r.model_confidence !== d.confidence && <> (model said {r.model_confidence}, adjusted by lessons)</>}</p>
         )}
@@ -80,10 +96,17 @@ function DecisionDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       <Panel title="Why: the checks, in order">
         <Trail checks={d.checks_json ?? []} outcomeTone={failing ? "loss" : "gain"}
-          outcome={failing ? `Stopped at ${failing.name.replace(/_/g, " ")}` : d.type === "PLACED" ? "Order placed" : d.type === "EXITED" ? "Position closed" : d.type.toLowerCase()} />
+          outcome={failing ? `Rejected at ${failing.name.replace(/_/g, " ")}: ${failing.detail}` : d.type === "PLACED" ? (d.side === "SELL" ? "Short sold (intraday)" : "Order placed") : d.type === "EXITED" ? "Position closed" : d.type === "ERROR" ? "Error: nothing was decided" : decisionLabel(d)} />
       </Panel>
 
-      {(r.summary || r.reasoning || r.rule || r.entry_reason || r.exit_reason) && (
+      {r.action && (r.summary || r.reasoning) && (
+        <Panel title="The AI's analysis">
+          <AiVerdict a={{ action: r.action, confidence: r.model_confidence, summary: r.summary, reasoning: r.reasoning, risks: r.risks,
+                          model: r.model, prompt_version: r.prompt_version, technicals: inputs.technicals ? { score: inputs.technicals.score, reasons: inputs.technicals.reasons } : null }} />
+        </Panel>
+      )}
+
+      {!r.action && (r.summary || r.reasoning || r.rule || r.entry_reason || r.exit_reason) && (
         <Panel title="Reasoning">
           <div className="space-y-3">
             {r.rule && <pre className="whitespace-pre-wrap rounded-lg bg-dusk p-3 text-sm">{r.rule}</pre>}

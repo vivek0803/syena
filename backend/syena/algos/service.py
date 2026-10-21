@@ -64,10 +64,32 @@ def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
     end = utcnow()
     start = end - timedelta(days=days if algo.timeframe == "day" else min(days, 180))
     cfg = backtest_config(db, algo.style)
-    per = [run(md.candles(sym, algo.timeframe, start, end), algo.parsed_rule, cfg, sym) for sym in algo.symbols]
+    per, failed = [], []
+    for sym in algo.symbols:  # one stock's missing data or a rate-limit hiccup must not sink the whole backtest
+        try:
+            df = md.candles(sym, algo.timeframe, start, end)
+            if df is None or len(df) < 3:
+                failed.append({"symbol": sym, "reason": "no price history"})
+                continue
+            per.append(run(df, algo.parsed_rule, cfg, sym))
+        except RuleError:
+            raise
+        except Exception as e:
+            log.warning("backtest stock skipped", extra={"algo_id": algo.id, "stock": sym, "error": str(e)})
+            failed.append({"symbol": sym, "reason": str(e)[:200]})
+    if not per:
+        raise RuleError("No price history could be loaded for any of the stocks: "
+                        + "; ".join(f"{f['symbol']}: {f['reason']}" for f in failed[:5]))
     report = combine(per, cfg)
+    report["failed_symbols"] = failed
     report["config"] = {"start": start.isoformat(), "end": end.isoformat(), "timeframe": algo.timeframe,
-                        "style": algo.style.value, "symbols": algo.symbols}
+                        "style": algo.style.value, "symbols": [r["symbol"] for r in per]}
+    from syena.screener.screens import linked_screens
+
+    if linked_screens(db, algo.id):
+        report["note"] = ("These stocks are the ones passing the screen TODAY. The backtest replays the technical rule on "
+                          "their past prices but cannot know which stocks passed the screen in the past (that needs "
+                          "historical fundamentals), so results look better than reality would have been.")
     g = settings_store.get(db, "live_gate")
     m = report["metrics"]
     algo.backtest_result = report
@@ -82,6 +104,8 @@ def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
 
 
 def start(db: Session, algo: Algo) -> Algo:
+    if algo.status == "DELETED":
+        raise RuleError("this algo was deleted")
     if algo.status not in ("CONFIRMED", "STOPPED") or not algo.backtest_result:
         raise RuleError("confirm the rule and run a backtest before starting")
     if algo.run_mode == "BACKTEST":
@@ -144,6 +168,26 @@ def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_f
     lookback = warmup_bars(rule) * BAR_MINUTES[algo.timeframe]
     start = now - timedelta(minutes=lookback * (3 if algo.timeframe != "day" else 2) + 3 * 1440)
     out = []
+    # Positions in stocks no longer on the algo's list (e.g. they left its screen) are still managed to the end:
+    # sold now if the screen says "sell when a stock leaves", otherwise by the exit rule (and stop/target as always).
+    listed = set(algo.symbols or [])
+    orphans = [t for t in db.scalars(select(Trade).where(Trade.algo_id == algo.id, Trade.status == TradeStatus.OPEN))
+               if t.stock not in listed]
+    if orphans:
+        from syena.screener.screens import linked_screens
+
+        sell_on_leave = any(sc.exit_on_removal for sc in linked_screens(db, algo.id))
+        for t in orphans:
+            df = completed_bars(md.candles(t.stock, algo.timeframe, start, now), algo.timeframe, now)
+            if sell_on_leave:
+                price = md.ltp([t.stock]).get(t.stock) or (float(df["close"].iloc[-1]) if len(df) else t.entry_price)
+                d = engine.exit_trade(db, t, "left_screen", price, broker_factory=broker_factory,
+                                      detail={"why": "stock no longer passes the linked fundamental screen"})
+                out.append(d.id)
+            elif len(df) >= 3 and rule.get("exit") and bool(evaluate(df, rule["exit"]).iloc[-1]):
+                d = engine.exit_trade(db, t, "exit_rule", float(df["close"].iloc[-1]), broker_factory=broker_factory,
+                                      detail={"rule": describe_rule(rule)})
+                out.append(d.id)
     for sym in algo.symbols:
         df = completed_bars(md.candles(sym, algo.timeframe, start, now), algo.timeframe, now)
         if len(df) < 3:

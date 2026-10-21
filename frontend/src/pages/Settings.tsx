@@ -11,6 +11,7 @@ const sections: { id: string; label: string; keys: [string, string, string][] }[
     ["trade_gate", "Trade gate", "What a signal must clear before an order is placed."],
     ["styles", "Intraday and swing", "Cutoff and square-off times are IST."],
     ["orders", "Orders", "Limit orders are preferred; market orders always carry market protection."],
+    ["amo", "After-market orders (AMO)", "Swing and long-term buys signalled while the market is closed are queued for the next open, at most max_gap_pct above the signal price. Unfilled ones are cancelled at cancel_unfilled_after (IST)."],
     ["paper", "Paper trading", "Fills are simulated from live quotes with this slippage."]] },
   { id: "ai", label: "AI & news", keys: [
     ["models", "Model tiers", "Second opinion is required to agree in LIVE when set. A shadow model runs in parallel and is never traded."],

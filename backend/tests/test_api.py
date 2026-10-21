@@ -65,5 +65,34 @@ def test_csv_exports(authed):
 
 def test_invest_requires_zerodha(authed):
     r = authed.post("/api/invest/review", json={"symbol": "INFY", "style": "SWING", "entry_type": "market", "entry_reason": "x",
-                                               "target": 1700, "stop_loss": 1400, "holding_days": 30})
+                                               "target_pct": 12, "stop_loss_pct": 5, "holding_days": 30})
     assert r.status_code == 409
+
+
+def test_delete_algo(authed, db):
+    from syena.models import Algo, Signal, Style, Trade, TradeStatus
+    from syena.news.pipeline import news_algo
+
+    mk = lambda: authed.post("/api/algos", json={"text": "buy when rsi(14) < 30", "style": "SWING", "run_mode": "PAPER",  # noqa: E731
+                                                 "symbols": ["INFY"], "timeframe": "day"}).json()["algo"]["id"]
+    fresh = mk()
+    r = authed.delete(f"/api/algos/{fresh}")
+    assert r.status_code == 200 and r.json() == {"deleted": True, "kept_history": False}
+    assert authed.get(f"/api/algos/{fresh}").status_code == 404
+
+    used = mk()
+    db.add(Signal(source="algo", algo_id=used, symbol="INFY", action="BUY", confidence=0))
+    t = Trade(algo_id=used, source="algo", mode="PAPER", style=Style.SWING, stock="INFY", side="BUY", qty=1,
+              invested_amount=1500, status=TradeStatus.OPEN)
+    db.add(t)
+    db.commit()
+    assert authed.delete(f"/api/algos/{used}").status_code == 409  # open position
+    t.status = TradeStatus.CLOSED
+    db.commit()
+    assert authed.delete(f"/api/algos/{used}").json()["kept_history"] is True
+    assert used not in [a["id"] for a in authed.get("/api/algos").json()]
+    assert authed.post(f"/api/algos/{used}/start").status_code == 400
+
+    news_id = news_algo(db).id
+    assert authed.delete(f"/api/algos/{news_id}").status_code == 400
+    assert db.get(Algo, news_id) is not None

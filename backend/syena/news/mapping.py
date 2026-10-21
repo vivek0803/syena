@@ -31,14 +31,50 @@ def _norm(t: str) -> str:
     return " " + re.sub(r"[^a-z0-9& ]", " ", t.lower()) + " "
 
 
-def instrument_aliases(db: Session, limit: int = 5000) -> dict[str, list[str]]:
+# NSE series suffixes on trading symbols ("GULFPETRO-BE" = trade-to-trade segment of GULFPETRO). Prices, screens and
+# orders all use the plain symbol, so news maps to that. BZ (suspended/non-compliant) stocks are left out entirely.
+SERIES = {"BE", "BL", "IL", "E1", "BT"}
+SKIP_SERIES = {"BZ", "SM", "ST"}  # suspended (BZ) and SME-platform (SM/ST) stocks: no price data, can't be traded here
+_cache: dict = {"t": 0.0, "v": None}
+
+
+def base_symbol(sym: str) -> str | None:
+    head, _, tail = sym.rpartition("-")
+    if head and tail in SKIP_SERIES:
+        return None
+    return head if head and tail in SERIES else sym
+
+
+def instrument_aliases(db: Session) -> dict[str, list[str]]:
+    import time
+
+    if _cache["v"] is not None and time.monotonic() - _cache["t"] < 600:
+        return _cache["v"]
+    from syena.models import Stock
+
     out = {k: list(v) for k, v in ALIASES.items()}
-    for sym, name in db.execute(select(Instrument.tradingsymbol, Instrument.name).limit(limit)):
-        names = out.setdefault(sym, [])
+
+    def add(sym: str, name: str | None) -> None:
+        base = base_symbol(sym)
+        if not base:
+            return
+        names = out.setdefault(base, [])
         if name:
             core = " ".join(_SUFFIX.sub(" ", name.lower()).split())
+            core = " ".join(re.sub(r"[^a-z0-9& ]", " ", core).split())
             if len(core) >= 4 and core not in names:
                 names.append(core)
+
+    for sym, name in db.execute(select(Instrument.tradingsymbol, Instrument.name)
+                                .where(Instrument.exchange == "NSE", Instrument.instrument_type == "EQ")):
+        add(sym, name)
+    for sym, name in db.execute(select(Stock.symbol, Stock.name).where(Stock.active.is_(True))):  # Angel users: names from the screener
+        add(sym, name)
+    # only propose stocks Syena can price and trade: the stock list (built from the price source) when it exists
+    tradeable = set(db.scalars(select(Stock.symbol).where(Stock.active.is_(True))))
+    if tradeable:
+        out = {k: v for k, v in out.items() if k in tradeable}
+    _cache.update(t=time.monotonic(), v=out)
     return out
 
 

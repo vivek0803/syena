@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from syena.config import get_settings
 from syena.db import utcnow
 from syena.market import kite as kite_session
-from syena.market.data import KiteMarketData
+from syena.market import source as md_source
 from syena.models import AppSetting
 from syena.monitor import approve_sell, reject_sell, status_text
 from syena.notify import telegram
@@ -17,7 +17,7 @@ OFFSET_KEY = "_telegram_offset"
 
 
 def dispatch(db: Session, update: dict) -> str:
-    md = KiteMarketData(db) if kite_session.active_token(db) else None
+    md = md_source.get_market_data(db) if md_source.ready(db) else None
     return telegram.handle_update(
         db, update,
         approve_sell=lambda d, a, t: approve_sell(d, a, t, md),

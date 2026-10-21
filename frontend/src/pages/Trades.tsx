@@ -1,3 +1,4 @@
+import StockLink from "../components/StockLink";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ErrorNote, Page, Panel, Pill, Table, Tabs, useToast } from "../components/ui";
@@ -32,7 +33,7 @@ export default function Trades() {
         <Table rows={rows} rowKey={(r: any) => r.id} onRow={(r: any) => r.decision_id && nav(`/decisions/${r.decision_id}`)}
           cols={[
             { key: "created_at", label: "Opened", render: (r: any) => when(r.created_at) },
-            { key: "stock", label: "Stock", render: (r: any) => <b>{r.stock}</b> },
+            { key: "stock", label: "Stock", render: (r: any) => <span className="flex items-center gap-2"><StockLink symbol={r.stock} />{r.side === "SELL" && <span className="rounded bg-loss-soft px-1.5 text-[12px] text-loss">short</span>}</span> },
             { key: "mode", label: "Mode", render: (r: any) => <Pill tone={r.mode === "LIVE" ? "loss" : "gain"}>{r.mode}</Pill> },
             { key: "source", label: "Source", render: (r: any) => `${r.source}${r.algo_id ? ` #${r.algo_id}` : ""}` },
             { key: "style", label: "Style", render: (r: any) => r.style.toLowerCase() },

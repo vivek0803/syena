@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from syena import invest as invest_svc
+from syena import settings_store
 from syena.api.common import market_data, ser
 from syena.api.deps import authenticated
 from syena.db import SessionLocal, get_db, utcnow
@@ -20,6 +21,7 @@ from syena.learning import mining
 from syena.market.calendar import to_ist
 from syena.models import (Decision, EvalResult, EvalRun, Lesson, LessonApplication, LessonEvidence, ManualLabel, NewsAnalysis,
                           NewsItem, Trade, TradeReview, TradeStatus)
+from syena.models import DecisionType
 from syena.news import pipeline
 
 router = APIRouter(prefix="/api", tags=["intel"], dependencies=[Depends(authenticated)])
@@ -27,11 +29,17 @@ router = APIRouter(prefix="/api", tags=["intel"], dependencies=[Depends(authenti
 
 # ---------------------------------------------------------------- news
 @router.get("/news")
-def news(status: str | None = None, symbol: str | None = None, limit: int = 100, before_id: int | None = None,
-         db: Session = Depends(get_db)):
+def news(status: str | None = None, symbol: str | None = None, source: str | None = None, limit: int = 100,
+         before_id: int | None = None, db: Session = Depends(get_db)):
     q = select(NewsItem)
     if status:
         q = q.where(NewsItem.status == status.upper())
+    if source == "telegram":
+        q = q.where(NewsItem.source.like("Telegram%"))
+    elif source == "rss":  # every feed except NSE filings and Telegram
+        q = q.where(~NewsItem.source.like("Telegram%"), NewsItem.source != "NSE announcements")
+    elif source:
+        q = q.where(NewsItem.source == source)
     if before_id:
         q = q.where(NewsItem.id < before_id)
     items = list(db.scalars(q.order_by(NewsItem.published_at.desc()).limit(min(limit, 300))))
@@ -43,6 +51,14 @@ def news(status: str | None = None, symbol: str | None = None, limit: int = 100,
     for t in db.scalars(select(Trade).where(Trade.news_item_ids.is_not(None)).order_by(Trade.id.desc()).limit(500)):
         for nid in t.news_item_ids or []:
             trades_by_news[nid].append({"trade_id": t.id, "stock": t.stock, "mode": t.mode, "status": t.status.value, "pnl": t.profit_loss})
+    sig_ids = [(a.result or {}).get("signal_id") for lst in analyses.values() for a in lst if a.stage == "analysis"]
+    dec_by_sig = {d.signal_id: d for d in db.scalars(select(Decision).where(Decision.signal_id.in_([x for x in sig_ids if x])))}
+    errors_by_news = defaultdict(list)  # stocks that were rejected before the AI could answer (price/symbol errors)
+    for d in db.scalars(select(Decision).where(Decision.source == "news", Decision.type == DecisionType.REJECTED,
+                                               Decision.signal_id.is_(None)).order_by(Decision.id.desc()).limit(300)):
+        for n in (d.inputs_json or {}).get("news", []):
+            if n.get("id") in ids:
+                errors_by_news[n["id"]].append({"symbol": d.symbol, "summary": d.summary, "decision_id": d.id})
     out = []
     for i in items:
         an = analyses.get(i.id, [])
@@ -53,11 +69,79 @@ def news(status: str | None = None, symbol: str | None = None, limit: int = 100,
             continue
         out.append(ser(i, exclude=("content_hash",), extra={
             "symbols": syms, "event_type": tri.event_type if tri else None, "triage_reason": tri.summary if tri else None,
-            "analyses": [{"symbol": (a.symbols or [None])[0], "sentiment": a.sentiment, "summary": a.summary,
-                          "action": (a.result or {}).get("action"), "confidence": (a.result or {}).get("confidence"),
-                          "signal_id": (a.result or {}).get("signal_id"), "model": a.model} for a in ana],
+            "analyses": [_analysis_out(a, dec_by_sig) for a in ana], "errors": errors_by_news.get(i.id, []),
             "trades": trades_by_news.get(i.id, [])}))
     return out
+
+
+def _analysis_out(a, dec_by_sig: dict) -> dict:
+    r = a.result or {}
+    d = dec_by_sig.get(r.get("signal_id"))
+    fail = next((c for c in ((d.checks_json or []) if d else []) if not c.get("passed")), None)
+    tech = r.get("technicals") or {}
+    return {"symbol": (a.symbols or [None])[0], "sentiment": a.sentiment, "summary": a.summary,
+            "reasoning": r.get("reasoning"), "risks": r.get("risks") or [], "action": r.get("action"),
+            "confidence": r.get("confidence"), "signal_id": r.get("signal_id"), "model": a.model,
+            "prompt_version": a.prompt_version, "technicals": {"score": tech.get("score"), "reasons": tech.get("reasons")},
+            "decision": {"id": d.id, "type": d.type.value, "summary": d.summary,
+                         "failed": {"name": fail["name"], "detail": fail.get("detail")} if fail else None} if d else None}
+
+
+@router.get("/news/sources")
+def news_sources(hours: int = 24, db: Session = Depends(get_db)):
+    """Each source: did the last fetch work, how many items, and what happened to its articles (last N hours)."""
+    from syena.models import AppSetting
+
+    since = utcnow() - timedelta(hours=max(1, min(hours, 24 * 30)))
+    counts: dict[str, dict[str, int]] = defaultdict(dict)
+    for src, st, n in db.execute(select(NewsItem.source, NewsItem.status, func.count()).where(NewsItem.fetched_at >= since)
+                                 .group_by(NewsItem.source, NewsItem.status)):
+        counts[src][st] = n
+    row = db.get(AppSetting, "_news_sources")
+    health = (row.value or {}) if row else {}
+    cfg = settings_store.get(db, "news")
+    names = [f["name"] for f in cfg["feeds"]] + [
+        "Telegram @" + c.strip().removeprefix("https://").removeprefix("t.me/").removeprefix("s/").strip("/@ ") for c in cfg.get("telegram_channels") or []]
+    out = []
+    for name in dict.fromkeys(names + sorted(counts)):
+        c = counts.get(name, {})
+        out.append({"name": name, "health": health.get(name), "total": sum(c.values()), "status": c,
+                    "enabled": next((f.get("enabled", True) for f in cfg["feeds"] if f["name"] == name), True)})
+    return out
+
+
+@router.get("/news/funnel")
+def news_funnel(hours: int = 24, db: Session = Depends(get_db)):
+    """Where news went in the last N hours: fetched -> skipped (old/duplicate/not relevant) -> analysed ->
+    AI verdict -> trade gate. Answers "is it working, or is everything blocked?"."""
+    from sqlalchemy import func
+
+    from syena import settings_store
+    from syena.models import Decision, Signal
+
+    since = utcnow() - timedelta(hours=max(1, min(hours, 24 * 30)))
+    status = dict(db.execute(select(NewsItem.status, func.count()).where(NewsItem.fetched_at >= since)
+                             .group_by(NewsItem.status)).all())
+    verdicts = dict(db.execute(select(Signal.action, func.count()).where(Signal.source == "news", Signal.shadow.is_(False),
+                                                                         Signal.ts >= since).group_by(Signal.action)).all())
+    decisions = list(db.scalars(select(Decision).where(Decision.source == "news", Decision.ts >= since)))
+    blocked: dict[str, int] = defaultdict(int)
+    for d in decisions:
+        if d.type.value in ("REJECTED", "HOLD"):
+            fail = next((c for c in (d.checks_json or []) if not c.get("passed")), None)
+            blocked["ai_verdict" if d.type.value == "HOLD" else (fail["name"] if fail else "other")] += 1
+    scored = [d for d in decisions if (d.reason_json or {}).get("weighted_score") is not None]  # final 80/15/5 scores
+    thr = settings_store.get(db, "trade_gate")["confidence_threshold"]
+    return {
+        "hours": hours, "fetched": sum(status.values()), "status": status, "verdicts": verdicts,
+        "placed": sum(1 for d in decisions if d.type.value == "PLACED"),
+        "hold": sum(1 for d in decisions if d.type.value == "HOLD"),
+        "rejected": sum(1 for d in decisions if d.type.value in ("REJECTED", "HOLD")),
+        "errors": sum(1 for d in decisions if d.type.value == "ERROR"),
+        "shorts": sum(1 for d in decisions if d.type.value == "PLACED" and d.side == "SELL"),
+        "blocked_by": dict(sorted(blocked.items(), key=lambda kv: -kv[1])),
+        "buy_confidences": sorted(round(d.reason_json["weighted_score"]) for d in scored), "confidence_threshold": thr,
+    }
 
 
 @router.post("/news/run")
@@ -85,15 +169,17 @@ def label(body: LabelIn, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------- manual invest
 class PlanIn(BaseModel):
     symbol: str = Field(max_length=32)
-    style: str = Field(pattern="^(INTRADAY|SWING)$")
+    style: str = Field(pattern="^(INTRADAY|SWING|LONG_TERM)$")
     entry_type: str = Field(pattern="^(market|range)$")
     entry_low: float | None = None
     entry_high: float | None = None
     entry_reason: str = Field(max_length=2000)
     pe: float | None = None
     exit_condition: str = Field(default="", max_length=1000)
-    target: float
-    stop_loss: float
+    # Percent from your entry price, e.g. target_pct=12 -> sell at +12%, stop_loss_pct=5 -> exit at -5%.
+    # Optional for LONG_TERM (no automatic exit when left empty).
+    target_pct: float | None = Field(default=None, gt=0, le=1000)
+    stop_loss_pct: float | None = Field(default=None, gt=0, lt=100)
     holding_days: int = Field(default=0, ge=0, le=3650)
 
 

@@ -91,15 +91,32 @@ def effective_mode(db: Session, intent: TradeIntent) -> tuple[str, Check]:
     return "LIVE", Check("mode", True, f"system LIVE and strategy '{algo.name}' is LIVE-enabled")
 
 
-def base_checks(db: Session, intent: TradeIntent, mode: str, now: datetime) -> tuple[list[Check], int, float]:
+def amo_allowed(db: Session, intent: TradeIntent) -> bool:
+    """Signals while the market is closed are kept in Syena's own queue (any style, buy or short) and placed by
+    Syena itself as normal orders once the market opens. Nothing is sent to the broker until then."""
+    return bool(settings_store.get(db, "amo")["enabled"])
+
+
+def base_checks(db: Session, intent: TradeIntent, mode: str, now: datetime) -> tuple[list[Check], int, float, bool]:
     state = mode_service.get_state(db)
     holidays = settings_store.get(db, "holidays")
     styles = settings_store.get(db, "styles")
     sizing = settings_store.get(db, "sizing")
     checks = [Check("not_halted", not state.halted, "trading halted: " + (state.halt_reason or "") if state.halted else "kill switch off")]
     open_now = calendar.is_market_open(now, holidays)
-    checks.append(Check("market_hours", open_now, "market open" if open_now else "market closed (hours/holiday)"))
-    if intent.style == Style.INTRADAY:
+    amo = not open_now and amo_allowed(db, intent)
+    if open_now:
+        checks.append(Check("market_hours", True, "market open"))
+    elif amo:
+        q = settings_store.get(db, "amo")
+        way = "more than" if intent.side == "BUY" else "less than"
+        checks.append(Check("market_hours", True, f"market closed: queued in Syena; it places the order itself after "
+                                                  f"{q.get('place_after', '09:16')} at the next open, unless the price opens "
+                                                  f"{q['max_gap_pct']:g}% {way} {intent.ref_price}"))
+    else:
+        checks.append(Check("market_hours", False, "market closed (hours/holiday); queueing for the next open is turned off "
+                                                   "(Settings → amo → enabled)"))
+    if intent.style == Style.INTRADAY and open_now:
         ok = calendar.before(now, styles["intraday_entry_cutoff"])
         checks.append(Check("intraday_cutoff", ok, f"cutoff {styles['intraday_entry_cutoff']} IST"))
     sz = size_position(intent.ref_price, sizing["min_amount"], sizing["max_amount"])
@@ -110,7 +127,7 @@ def base_checks(db: Session, intent: TradeIntent, mode: str, now: datetime) -> t
         checks.append(Check("circuit_limit", not near, f"price {intent.ref_price} vs circuit {lo}-{hi}"))
     if sz.ok:
         checks.extend(check_risk(db, mode, intent.symbol, sz.amount, now))
-    return checks, sz.qty, sz.amount
+    return checks, sz.qty, sz.amount, amo
 
 
 def _decision(db: Session, intent: TradeIntent, dtype: DecisionType, mode: str, summary: str,
@@ -157,7 +174,7 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
             return prior
 
     mode, mode_check = effective_mode(db, intent)
-    checks, qty, amount = base_checks(db, intent, mode, now)
+    checks, qty, amount, amo = base_checks(db, intent, mode, now)
     checks = [mode_check, *checks, *intent.extra_checks]
     fail = first_failure(checks)
     if fail:
@@ -183,13 +200,37 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
     ocfg = settings_store.get(db, "orders")
     otype = intent.order_type or ("LIMIT" if ocfg["prefer_limit"] else "MARKET")
     limit = intent.limit_price or (marketable_limit(intent.side, intent.ref_price, ocfg["limit_buffer_bps"]) if otype == "LIMIT" else None)
+    if amo:
+        # Kept in Syena's queue: nothing goes to the broker now. At the open, execution/pending.py checks the gap
+        # against this reference price and places a normal order itself.
+        order = Order(idempotency_key=f"{key}-ENTRY", trade_id=trade.id, mode=mode, broker="kite" if mode == "LIVE" else "paper",
+                      symbol=intent.symbol, side=intent.side, qty=qty, order_type="LIMIT", price=intent.ref_price,
+                      product=product_for(intent.style), purpose="ENTRY", variety="queued", status=OrderStatus.PLACED,
+                      message="queued in Syena until the market opens")
+        db.add(order)
+        db.flush()
+        db.add(OrderEvent(order_id=order.id, status="QUEUED", message="market closed: waiting in Syena's queue for the next open"))
+        trade.status = TradeStatus.PENDING
+        q = settings_store.get(db, "amo")
+        checks.append(Check("queued", True, f"placed by Syena after {q.get('place_after', '09:16')} at the next open; cancelled if "
+                                            f"the price gaps over {q['max_gap_pct']:g}% against the trade or nothing fills by "
+                                            f"{q['cancel_unfilled_after']}"))
+        d = _decision(db, intent, DecisionType.PLACED, mode,
+                      f"QUEUED {'SHORT ' if intent.side == 'SELL' else ''}{intent.side} {qty} {intent.symbol}: Syena places it at the "
+                      f"next market open (signal price {intent.ref_price})", checks, trade.id)
+        trade.decision_id = d.id
+        db.commit()
+        events.publish(db, "decision", {"id": d.id, "type": d.type.value, "symbol": intent.symbol, "trade_id": trade.id})
+        log.info("entry queued for the open", extra={"stock": intent.symbol, "side": intent.side, "mode": mode})
+        return d
+    variety = "regular"
     order = Order(idempotency_key=f"{key}-ENTRY", trade_id=trade.id, mode=mode, broker="kite" if mode == "LIVE" else "paper",
                   symbol=intent.symbol, side=intent.side, qty=qty, order_type=otype, price=limit,
-                  product=product_for(intent.style), purpose="ENTRY")
+                  product=product_for(intent.style), purpose="ENTRY", variety=variety)
     db.add(order)
     db.flush()
     req = OrderRequest(order.idempotency_key, intent.symbol, intent.side, qty, order.product, "ENTRY",
-                       intent.ref_price, otype, limit)
+                       intent.ref_price, otype, limit, variety)
     res = broker_factory(db, mode).place(db, req)
     _record_order(db, order, res)
 
@@ -203,7 +244,8 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
     elif res.status == "PLACED":
         trade.status = TradeStatus.PENDING
         checks.append(Check("broker", True, res.message, {"order_id": res.broker_order_id}))
-        d = _decision(db, intent, DecisionType.PLACED, mode, f"PLACED {intent.side} {qty} {intent.symbol}: awaiting fill", checks, trade.id)
+        what = f"AMO queued for next open, limit {limit}" if amo else "awaiting fill"
+        d = _decision(db, intent, DecisionType.PLACED, mode, f"PLACED {intent.side} {qty} {intent.symbol}: {what}", checks, trade.id)
     else:
         trade.status = TradeStatus.FAILED
         checks.append(Check("broker", False, res.message))
@@ -214,6 +256,16 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
         _broker_error_fallback(db)
     events.publish(db, "decision", {"id": d.id, "type": d.type.value, "symbol": intent.symbol, "trade_id": trade.id})
     log.info("entry processed", extra={"stock": intent.symbol, "algo_id": intent.algo_id, "result": d.type.value, "mode": mode})
+    return d
+
+
+def record_verdict(db: Session, intent: TradeIntent, dtype: DecisionType, summary: str, checks: list[Check]) -> Decision:
+    """A decision that opens nothing: the AI said HOLD, or a step failed before the trade gate (REJECTED + reason)."""
+    mode = mode_service.current_mode(db)
+    d = _decision(db, intent, dtype, getattr(mode, "value", str(mode)), summary, checks)
+    db.commit()
+    events.publish(db, "decision", {"id": d.id, "type": dtype.value, "symbol": intent.symbol})
+    log.info("decision recorded", extra={"stock": intent.symbol, "type": dtype.value, "summary": summary[:200]})
     return d
 
 
@@ -241,7 +293,8 @@ def exit_trade(db: Session, trade: Trade, reason: str, ref_price: float, actor: 
     db.flush()
     ocfg = settings_store.get(db, "orders")
     order.price = marketable_limit(intent.side, ref_price, ocfg["limit_buffer_bps"] * 3)  # wider buffer: exits must fill
-    req = OrderRequest(key, trade.stock, intent.side, trade.qty, order.product, "EXIT", ref_price, "LIMIT", order.price)
+    req = OrderRequest(key, trade.stock, intent.side, trade.qty, order.product, "EXIT", ref_price, "LIMIT", order.price,
+                       entry_price=trade.entry_price if trade.side == "SELL" else None)
     res = broker_factory(db, trade.mode).place(db, req)
     _record_order(db, order, res)
     checks = [Check("exit_reason", True, reason), Check("broker", res.status == "COMPLETE", res.message)]

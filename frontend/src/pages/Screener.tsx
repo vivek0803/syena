@@ -1,0 +1,256 @@
+import StockLink from "../components/StockLink";
+import { FormEvent, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { Empty, ErrorNote, Field, Loading, Modal, Page, Panel, Pill, Stat, Table, Tabs, useToast } from "../components/ui";
+import { api } from "../lib/api";
+import { day, money, when } from "../lib/format";
+import { useAct, useApi } from "../lib/hooks";
+
+const n = (v: any, d = 1) => (v === null || v === undefined ? "–" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d }));
+const cols = [
+  { key: "symbol", label: "Stock", className: "whitespace-normal min-w-[160px]", render: (r: any) => <><StockLink symbol={r.symbol} /><div className="text-[13px] text-mute">{r.name ?? ""}</div></> },
+  { key: "price", label: "Price", align: "right" as const, render: (r: any) => n(r.price, 2) },
+  { key: "change", label: "Day %", align: "right" as const, render: (r: any) => <span className={r.change > 0 ? "text-gain" : r.change < 0 ? "text-loss" : ""}>{n(r.change, 2)}</span> },
+  { key: "market_cap", label: "Mcap ₹cr", align: "right" as const, render: (r: any) => n(r.market_cap, 0) },
+  { key: "pe", label: "P/E", align: "right" as const, render: (r: any) => n(r.pe) },
+  { key: "pb", label: "P/B", align: "right" as const, render: (r: any) => n(r.pb) },
+  { key: "roe", label: "ROE %", align: "right" as const, render: (r: any) => n(r.roe) },
+  { key: "debt_to_equity", label: "D/E", align: "right" as const, render: (r: any) => n(r.debt_to_equity, 2) },
+  { key: "sales_growth", label: "Sales gr %", align: "right" as const, render: (r: any) => n(r.sales_growth) },
+  { key: "profit_growth", label: "Profit gr %", align: "right" as const, render: (r: any) => n(r.profit_growth) },
+  { key: "dividend_yield", label: "Div yld %", align: "right" as const, render: (r: any) => n(r.dividend_yield, 2) },
+  { key: "pct_from_52w_high", label: "vs 52w high %", align: "right" as const, render: (r: any) => n(r.pct_from_52w_high) },
+];
+const examples = [
+  "roe > 15 and debt to equity < 0.5 and sales growth > 15 and market cap > 1000",
+  "pe < 15 and pb < 2 and dividend yield > 2",
+  "profit growth > 25 and roe > 18 and pct_from_52w_high > -10",
+];
+
+export default function Screener() {
+  const { id } = useParams();
+  return id ? <ScreenDetail id={Number(id)} /> : <ScreenerHome />;
+}
+
+function DataStatus() {
+  const toast = useToast();
+  const st = useApi<any>("/api/screener/status", { refetchInterval: 15_000 });
+  const refresh = useAct((what: string) => api("/api/screener/refresh", { body: { what } }), ["/api/screener"]);
+  const [csvOpen, setCsvOpen] = useState(false);
+  const s = st.data;
+  if (!s) return null;
+  return (
+    <Panel title="Data" aside={<div className="flex flex-wrap gap-2">
+      <button className="btn-ghost" disabled={refresh.isPending} onClick={() => refresh.mutate("prices", { onSuccess: () => toast.show("Updating prices for all stocks…") })}>Update prices now</button>
+      <button className="btn-ghost" disabled={refresh.isPending} onClick={() => refresh.mutate("fundamentals", { onSuccess: () => toast.show("Fetching company figures (next batch)…") })}>Fetch fundamentals now</button>
+      <button className="btn-ghost" onClick={() => setCsvOpen(true)}>Import Screener.in CSV</button></div>}>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Stat label="Listed stocks" value={n(s.stocks, 0)} />
+        <Stat label="With company figures" value={n(s.with_fundamentals, 0)} sub={s.stocks ? `${Math.round((s.with_fundamentals / s.stocks) * 100)}%` : undefined} />
+        <Stat label="Prices as of" value={s.latest_day ? day(s.latest_day) : "not yet"} sub={s.priced_latest_day ? `${n(s.priced_latest_day, 0)} stocks` : undefined} />
+        <Stat label="Background jobs" value={Object.keys(s.jobs ?? {}).length ? "" : "idle"} sub={Object.entries(s.jobs ?? {}).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(" · ")} />
+      </div>
+      <p className="mt-3 text-[13px] text-mute">Prices and ratios update every trading day at 4:05 PM. Company figures (EPS, book value, ROE, debt, growth…) refresh automatically each night, about 400 stocks at a time, so every stock is re-checked weekly and new quarterly results flow in on their own. Source: Yahoo Finance (free, unofficial), or your Screener.in export.</p>
+      <ErrorNote error={refresh.error} />
+      {toast.node}
+      <CsvModal open={csvOpen} onClose={() => setCsvOpen(false)} />
+    </Panel>
+  );
+}
+
+function CsvModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const toast = useToast();
+  const up = useAct((fd: FormData) => api("/api/screener/import-csv", { form: fd }), ["/api/screener"]);
+  const [file, setFile] = useState<File | null>(null);
+  return (
+    <Modal open={open} onClose={onClose} title="Import a Screener.in export">
+      <p className="text-parch-dim">In Screener.in, run a screen (e.g. "Market capitalization &gt; 0"), make sure the <b>NSE Code</b> column is added, and click Export. Columns Syena understands: Current Price, Market Capitalization, EPS 12M, Book value, Return on equity, Debt to equity, Sales growth, Profit growth, OPM, Promoter holding, Dividend yield.</p>
+      <input className="mt-3" type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+      <ErrorNote error={up.error} />
+      {toast.node}
+      <div className="mt-4 flex gap-2">
+        <button className="btn-primary" disabled={!file || up.isPending} onClick={() => {
+          const fd = new FormData(); fd.append("file", file as File);
+          up.mutate(fd, { onSuccess: (r: any) => { toast.show(`Imported ${r.imported} stocks`); onClose(); } });
+        }}>Import</button>
+        <button className="btn-ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ScreenerHome() {
+  const [tab, setTab] = useState("screens");
+  return (
+    <Page title="Screener" intro="Every NSE stock with daily prices and ratios. Save screens to get Telegram alerts when stocks enter or leave them, and technical signals on the ones that pass.">
+      <div className="space-y-6">
+        <DataStatus />
+        <Tabs tabs={[{ id: "screens", label: "My screens" }, { id: "all", label: "All stocks" }]} value={tab} onChange={setTab} />
+        {tab === "screens" ? <Screens /> : <AllStocks />}
+      </div>
+    </Page>
+  );
+}
+
+function AllStocks() {
+  const [where, setWhere] = useState("");
+  const [applied, setApplied] = useState("");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState("market_cap");
+  const [desc, setDesc] = useState(true);
+  const [page, setPage] = useState(0);
+  const qs = new URLSearchParams({ where: applied, q, sort, desc: String(desc), limit: "100", offset: String(page * 100) });
+  const { data, error, isLoading } = useApi<any>(`/api/screener/stocks?${qs}`);
+  const sortable = cols.map((c) => ({ ...c, label: <button className="hover:text-parch" onClick={() => { setSort(c.key === "symbol" ? "symbol" : c.key); setDesc(sort === c.key ? !desc : true); setPage(0); }}>{c.label}{sort === c.key ? (desc ? " ↓" : " ↑") : ""}</button> as any }));
+  return (
+    <Panel>
+      <form className="mb-4 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); setApplied(where); setPage(0); }}>
+        <Field label="Filter (same language as screens)"><input className="input min-w-[340px]" value={where} onChange={(e) => setWhere(e.target.value)} placeholder="roe > 15 and pe < 25" /></Field>
+        <Field label="Search"><input className="input" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="symbol or name" /></Field>
+        <button className="btn-primary">Apply</button>
+      </form>
+      <ErrorNote error={error} />
+      {isLoading ? <Loading /> : data && (<>
+        <p className="mb-2 text-sm text-mute">{n(data.total, 0)} stocks{data.day ? ` · prices of ${day(data.day)}` : " · prices not loaded yet: click 'Update prices now'"}</p>
+        <Table cols={sortable} rows={data.rows} rowKey={(r: any) => r.symbol} />
+        <div className="mt-3 flex gap-2">
+          <button className="btn-ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+          <button className="btn-ghost" disabled={(page + 1) * 100 >= data.total} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
+      </>)}
+    </Panel>
+  );
+}
+
+const blank = { name: "", conditions: "", signal_text: "", alerts: true, algo_id: "", exit_on_removal: false };
+
+function ScreenForm({ initial, onDone, id }: { initial?: any; onDone: (s: any) => void; id?: number }) {
+  const [f, setF] = useState(initial ?? blank);
+  const algos = useApi<any[]>("/api/algos");
+  const body = () => ({ ...f, signal_text: f.signal_text || null, algo_id: f.algo_id ? Number(f.algo_id) : null });
+  const preview = useAct((b: any) => api("/api/screener/preview", { body: b }));
+  const save = useAct((b: any) => api(id ? `/api/screener/screens/${id}` : "/api/screener/screens", { method: id ? "PUT" : "POST", body: b }), ["/api/screener"]);
+  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  const submit = (e: FormEvent) => { e.preventDefault(); save.mutate(body(), { onSuccess: onDone }); };
+  const p: any = preview.data;
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <Field label="Name"><input className="input" required value={f.name} onChange={set("name")} placeholder="Quality growth" /></Field>
+      <Field label="Conditions" hint={<>Fields: P/E, P/B, market cap (₹ cr), ROE, ROA, debt to equity, sales growth, profit growth, OPM, net margin, dividend yield, earnings yield, EV/EBITDA, promoter holding, price, % from 52 week high… e.g. <i>{examples[0]}</i></>}>
+        <textarea className="input min-h-[80px]" required value={f.conditions} onChange={set("conditions")} />
+      </Field>
+      <Field label="Technical signal on the stocks that pass (optional)" hint="Same language as algos, e.g. “RSI 14 crosses above 50 and close > EMA 50”. Checked daily after close.">
+        <input className="input" value={f.signal_text} onChange={set("signal_text")} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={f.alerts} onChange={set("alerts")} /> Telegram alerts</label>
+        <Field label="Keep this algo's stock list = screen (optional)">
+          <select className="input" value={f.algo_id} onChange={set("algo_id")}><option value="">none</option>
+            {(algos.data ?? []).filter((a: any) => a.kind === "rule").map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+        </Field>
+      </div>
+      {f.algo_id && <label className="flex items-center gap-2"><input type="checkbox" checked={f.exit_on_removal} onChange={set("exit_on_removal")} /> Sell the algo's position when a stock leaves this screen</label>}
+      <ErrorNote error={preview.error || save.error} />
+      {p && <p className="text-sm text-parch-dim">{p.readable}: <b>{p.count}</b> stocks pass today{p.missing_data ? ` (${p.missing_data} skipped: data missing)` : ""}{p.rows.length ? `: ${p.rows.slice(0, 12).map((r: any) => r.symbol).join(", ")}${p.count > 12 ? " …" : ""}` : ""}.</p>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-ghost" onClick={() => preview.mutate(body())}>Preview</button>
+        <button className="btn-primary" disabled={save.isPending}>{id ? "Save" : "Create screen"}</button>
+      </div>
+    </form>
+  );
+}
+
+function Screens() {
+  const nav = useNavigate();
+  const { data, error, isLoading } = useApi<any[]>("/api/screener/screens");
+  const [open, setOpen] = useState(false);
+  return (
+    <Panel title="My screens" aside={<button className="btn-primary" onClick={() => setOpen(true)}>New screen</button>}>
+      <ErrorNote error={error} />
+      {isLoading ? <Loading /> : !data?.length ? (
+        <Empty title="No screens yet">Create one, e.g. <i>{examples[0]}</i>. Syena runs it every trading day after the close and tells you on Telegram which stocks joined or left.</Empty>
+      ) : (
+        <Table rows={data} onRow={(r: any) => nav(`/screener/${r.id}`)} rowKey={(r: any) => r.id} cols={[
+          { key: "name", label: "Screen", render: (r: any) => <b>{r.name}</b> },
+          { key: "readable", label: "Conditions", className: "whitespace-normal", render: (r: any) => <span className="text-parch-dim">{r.readable}</span> },
+          { key: "n_members", label: "Stocks", align: "right" },
+          { key: "signal_text", label: "Signal", render: (r: any) => r.signal_text ? <Pill tone="gain">on</Pill> : "–" },
+          { key: "last_run_at", label: "Last run", render: (r: any) => r.last_run_at ? when(r.last_run_at) : "not yet" },
+        ]} />
+      )}
+      <Modal open={open} onClose={() => setOpen(false)} title="New screen" wide>
+        <ScreenForm onDone={(s: any) => { setOpen(false); nav(`/screener/${s.id}`); }} />
+      </Modal>
+    </Panel>
+  );
+}
+
+function ScreenDetail({ id }: { id: number }) {
+  const toast = useToast();
+  const nav = useNavigate();
+  const { data, error, isLoading } = useApi<any>(`/api/screener/screens/${id}`);
+  const run = useAct(() => api(`/api/screener/screens/${id}/run`, { method: "POST" }), ["/api/screener"]);
+  const del = useAct(() => api(`/api/screener/screens/${id}`, { method: "DELETE" }), ["/api/screener"]);
+  const [edit, setEdit] = useState(false);
+  if (isLoading) return <Page title="Screen"><Loading /></Page>;
+  if (error || !data) return <Page title="Screen"><ErrorNote error={error} /></Page>;
+  const s = data.screen;
+  return (
+    <Page title={s.name} intro={<Link to="/screener" className="text-saffron hover:underline">All screens</Link>} actions={<>
+      <button className="btn-primary" disabled={run.isPending} onClick={() => run.mutate(undefined, { onSuccess: (r: any) => toast.show(`${r.members.length} stocks pass`) })}>{run.isPending ? "Running…" : "Run now"}</button>
+      <button className="btn-ghost" onClick={() => setEdit(true)}>Edit</button>
+      <button className="btn-ghost text-loss" onClick={() => del.mutate(undefined, { onSuccess: () => nav("/screener") })}>Delete</button></>}>
+      <ErrorNote error={run.error || del.error} />
+      {toast.node}
+      <div className="space-y-6">
+        <Panel title="Rules">
+          <p>{s.readable}</p>
+          {s.signal_text && <p className="mt-2 text-parch-dim">Technical signal: “{s.signal_text}”</p>}
+          <p className="mt-2 text-sm text-mute">{s.alerts ? "Telegram alerts on." : "Alerts off."}{s.algo_id ? <> Linked <Link className="text-saffron hover:underline" to={`/algos/${s.algo_id}`}>algo #{s.algo_id}</Link> trades exactly these stocks{s.exit_on_removal ? " and sells a stock when it leaves the screen" : ""}.</> : ""}</p>
+        </Panel>
+        {!s.algo_id && <TradeScreen id={id} members={data.members.length} />}
+        <Panel title={`Stocks passing (${data.members.length})`} pad={false}>
+          <Table cols={cols} rows={data.members} rowKey={(r: any) => r.symbol} empty={<span className="text-parch-dim">{data.data_note ?? "No stocks pass these conditions today."}</span>} />
+        </Panel>
+        <Panel title="Daily changes">
+          {!data.runs.length ? <p className="text-parch-dim">No runs yet.</p> : (
+            <ul className="space-y-2">{data.runs.map((r: any) => (
+              <li key={r.id} className="border-b border-dusk-line pb-2">
+                <span className="text-mute">{day(r.day)}</span> · {r.members.length} stocks
+                {r.added.length > 0 && <div className="text-gain">➕ {r.added.join(", ")}</div>}
+                {r.removed.length > 0 && <div className="text-loss">➖ {r.removed.join(", ")}</div>}
+                {r.signals.length > 0 && <div>📈 {r.signals.map((x: any) => `${x.symbol} (${money(x.close)})`).join(", ")}</div>}
+              </li>))}</ul>
+          )}
+        </Panel>
+      </div>
+      <Modal open={edit} onClose={() => setEdit(false)} title="Edit screen" wide>
+        <ScreenForm id={id} initial={{ name: s.name, conditions: s.conditions, signal_text: s.signal_text ?? "", alerts: s.alerts, algo_id: s.algo_id ?? "", exit_on_removal: !!s.exit_on_removal }} onDone={() => setEdit(false)} />
+      </Modal>
+    </Page>
+  );
+}
+
+function TradeScreen({ id, members }: { id: number; members: number }) {
+  const nav = useNavigate();
+  const [f, setF] = useState({ text: "buy when RSI 14 crosses above 50 and close > EMA 50, exit when close < EMA 20", style: "SWING", timeframe: "day", exit_on_removal: true });
+  const make = useAct((b: any) => api(`/api/screener/screens/${id}/algo`, { body: b }), ["/api/screener", "/api/algos"]);
+  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  return (
+    <Panel title="Trade this screen">
+      <p className="mb-3 text-sm text-parch-dim">Fundamentals pick the stocks, a technical rule picks the moment. This creates a paper algo that watches only the {members} stocks passing this screen (biggest 100 if more), updated after every daily run. It starts as a draft: you'll confirm the rule, backtest and start it on the Algos page.</p>
+      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); make.mutate(f, { onSuccess: (r: any) => nav(`/algos/${r.algo_id}`) }); }}>
+        <Field label="When to buy and sell" hint="Same language as algos. Stop-loss and target come from the rule or the style's defaults.">
+          <textarea className="input min-h-[64px]" required value={f.text} onChange={set("text")} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Style"><select className="input" value={f.style} onChange={set("style")}><option value="SWING">Swing</option><option value="LONG_TERM">Long-term</option></select></Field>
+          <Field label="Candles"><select className="input" value={f.timeframe} onChange={set("timeframe")}><option value="day">Daily</option><option value="60minute">1 hour</option><option value="30minute">30 min</option><option value="15minute">15 min</option></select></Field>
+        </div>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={f.exit_on_removal} onChange={set("exit_on_removal")} /> Sell a position when its stock leaves the screen</label>
+        <ErrorNote error={make.error} />
+        <button className="btn-primary" disabled={make.isPending || !members}>{make.isPending ? "Creating…" : "Create algo"}</button>
+      </form>
+    </Panel>
+  );
+}

@@ -111,3 +111,29 @@ def supertrend(df: pd.DataFrame, n: int = 10, mult: float = 3.0) -> pd.DataFrame
 
 def volume_sma(df: pd.DataFrame, n: int = 20) -> pd.Series:
     return sma(df["volume"], n)
+
+
+# ---------------------------------------------------------------- swing range and Fibonacci
+# The range uses the PREVIOUS n bars (not the current one), so "close crosses above the 20-bar high"
+# can actually happen and nothing looks ahead.
+def highest(df: pd.DataFrame, n: int) -> pd.Series:
+    """Highest high of the previous n bars (swing high)."""
+    return df["high"].rolling(n, min_periods=n).max().shift(1)
+
+
+def lowest(df: pd.DataFrame, n: int) -> pd.Series:
+    """Lowest low of the previous n bars (swing low)."""
+    return df["low"].rolling(n, min_periods=n).min().shift(1)
+
+
+def fib(df: pd.DataFrame, n: int, level: float) -> pd.Series:
+    """Fibonacci retracement of the previous-n-bar range, measured down from the swing high:
+    level 0 = swing high, 61.8 = high - 0.618 x range, 100 = swing low."""
+    hi, lo = highest(df, n), lowest(df, n)
+    return hi - (hi - lo) * level / 100.0
+
+
+def fib_ext(df: pd.DataFrame, n: int, level: float) -> pd.Series:
+    """Fibonacci extension above the swing high: level 127.2 = low + 1.272 x range (= high + 0.272 x range)."""
+    hi, lo = highest(df, n), lowest(df, n)
+    return lo + (hi - lo) * level / 100.0

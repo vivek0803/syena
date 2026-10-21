@@ -74,7 +74,13 @@ def complete_login(db: Session, request_token: str) -> BrokerToken:
     s = get_settings()
     kite = _kite_cls()(api_key=s.kite_api_key)
     data = kite.generate_session(request_token, api_secret=s.kite_api_secret.get_secret_value())
-    return store_token(db, data["access_token"], data.get("user_id"))
+    row = store_token(db, data["access_token"], data.get("user_id"))
+    try:  # load the NSE symbol list now so reviews and charts work straight away
+        from syena.market.data import KiteMarketData
+        KiteMarketData(db).sync_instruments()
+    except Exception as e:
+        log.warning("instrument sync after login failed: %s", e)
+    return row
 
 
 def store_token(db: Session, access_token: str, user_id: str | None) -> BrokerToken:

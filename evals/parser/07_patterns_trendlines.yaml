@@ -1,0 +1,36 @@
+# Candlestick patterns and trendlines (support through swing lows, resistance through swing highs).
+- id: pat-01
+  text: "buy when a bullish engulfing forms and rsi 14 < 40"
+  entry: and(pattern(bullish_engulfing), lt(rsi(14), 40))
+- id: pat-02
+  text: "buy when hammer candle appears and close > sma 50, sell when bearish engulfing"
+  entry: and(pattern(hammer), gt(close, sma(50)))
+  exit: pattern(bearish_engulfing)
+- id: pat-03
+  text: "buy when morning star and volume above 20-day average"
+  entry: and(pattern(morning_star), gt(volume, vol_sma(20)))
+- id: pat-04
+  text: "buy when three white soldiers, sell when three black crows"
+  entry: pattern(three_white_soldiers)
+  exit: pattern(three_black_crows)
+- id: pat-05
+  text: "buy when any bullish reversal pattern and close > ema 200"
+  entry: and(pattern(any_bullish), gt(close, ema(200)))
+- id: pat-06
+  text: "buy when inverted hammer or piercing line"
+  entry: or(pattern(inverted_hammer), pattern(piercing_line))
+- id: tl-01
+  text: "buy when close crosses above trendline resistance of the last 100 candles"
+  entry: cross_above(close, tlr(100))
+- id: tl-02
+  text: "buy when close breaks above the trendline and volume above 20-day average"
+  entry: and(cross_above(close, tlr(50)), gt(volume, vol_sma(20)))
+- id: tl-03
+  text: "buy when close > trendline support and bullish harami, sell when close breaks below the trendline"
+  entry: and(gt(close, tls(50)), pattern(bullish_harami))
+  exit: cross_below(close, tls(50))
+- id: tl-04
+  text: "buy when trendline breakout, stop loss 2%, target 6%"
+  entry: cross_above(close, tlr(50))
+  stop_loss: {type: pct, value: 2}
+  target: {type: pct, value: 6}

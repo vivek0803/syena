@@ -123,3 +123,27 @@ def test_zerodha_sync_with_fake_kite(db, user):
     snap = sources.sync_zerodha(db, kite=K())
     h = db.query(Holding).filter_by(snapshot_id=snap.id).one()
     assert h.qty == 5 and h.value == 7500
+
+
+@pytest.mark.parametrize("isin,sym,name,cls", [
+    ("INF204KB14I2", "NIFTYBEES", None, "etf"), (None, "GOLDBEES", None, "etf"), (None, "MON100", "Motilal Oswal Nasdaq 100 ETF", "etf"),
+    (None, "SETFNIF50", None, "etf"), ("INE009A01021", "INFY", "Infosys", "equity"), (None, "ICICIB22-EQ", "Bharat 22 ETF", "etf"),
+    ("INF109KC1NT3", "SETFNIF50", None, "etf"),
+])
+def test_etfs_are_not_counted_as_stocks(isin, sym, name, cls):
+    assert sources.demat_class(isin, sym, name) == cls
+
+
+def test_zerodha_sync_splits_etfs_and_notes_mf_status(db, user):
+    class K:
+        def holdings(self):
+            return [{"tradingsymbol": "INFY", "isin": INFY, "quantity": 2, "average_price": 1400, "last_price": 1500},
+                    {"tradingsymbol": "NIFTYBEES", "isin": "INF204KB14I2", "quantity": 10, "average_price": 250, "last_price": 280}]
+
+        def mf_holdings(self):
+            raise PermissionError("Insufficient permission for that call.")
+
+    snap = sources.sync_zerodha(db, kite=K())
+    cls = {h.symbol: h.asset_class for h in db.query(Holding).filter_by(snapshot_id=snap.id)}
+    assert cls == {"INFY": "equity", "NIFTYBEES": "etf"}
+    assert "could not be read" in snap.note and "CAS" in snap.note

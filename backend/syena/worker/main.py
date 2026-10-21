@@ -1,6 +1,7 @@
 """Always-on worker: live prices (KiteTicker), algo runner, news pipeline, position monitor, learning loop,
 online evals and Telegram summaries. Run with:  python -m syena.worker.main
 """
+import json
 import logging
 import signal
 import threading
@@ -20,8 +21,9 @@ from syena.learning import lessons, mining, reviewer
 from syena.logging_setup import configure_logging
 from syena.market import calendar
 from syena.market import kite as kite_session
-from syena.market.data import KiteMarketData
-from syena.models import Algo, Instrument, Trade, TradeReview, TradeStatus, WorkerHeartbeat
+from syena.market import source as md_source
+from syena.market.angel import AngelError
+from syena.models import Algo, Instrument, Order, OrderStatus, Trade, TradeReview, TradeStatus, WorkerHeartbeat
 from syena.monitor import check_price_levels, daily_summary, handle_news_sell_signals, scan, token_check, weekly_digest
 from syena.news import pipeline
 from syena.services import mode as mode_service
@@ -53,8 +55,8 @@ class TickerService:
         return out
 
     def ensure(self, db) -> None:
-        row = kite_session.active_token(db)
-        if row is None:
+        row = kite_session.active_token(db) if md_source.provider() == "kite" else None
+        if row is None:  # Angel One mode polls prices instead of streaming
             self.stop()
             return
         from syena.security.crypto import decrypt
@@ -116,7 +118,7 @@ ticker = TickerService()
 
 
 def _md(db):
-    return KiteMarketData(db)
+    return md_source.get_market_data(db)
 
 
 def _market_open(db) -> bool:
@@ -131,11 +133,15 @@ def job(name):
                 try:
                     detail = fn(db)
                     hb = db.get(WorkerHeartbeat, name) or WorkerHeartbeat(name=name)
-                    hb.ts, hb.detail = utcnow(), detail if isinstance(detail, dict) else {"result": str(detail)[:200]}
+                    hb.ts = utcnow()
+                    hb.detail = json.loads(json.dumps(detail, default=str)) if isinstance(detail, dict) else {"result": str(detail)[:200]}
                     db.merge(hb)
                     db.commit()
                 except kite_session.KiteNotConnected:
                     pass
+                except AngelError as e:
+                    db.rollback()
+                    log.warning("job skipped: %s", e, extra={"job": name})
                 except Exception as e:
                     db.rollback()
                     log.exception("job failed", extra={"job": name, "error": str(e)})
@@ -152,7 +158,7 @@ def fast_loop(db):
     prices = ticker.fresh_prices()
     opens = list(db.scalars(select(Trade).where(Trade.status == TradeStatus.OPEN)))
     missing = [t.stock for t in opens if t.stock not in prices]
-    if missing and kite_session.active_token(db):
+    if missing and md_source.ready(db):
         prices.update(_md(db).ltp(sorted(set(missing))))
     acts = check_price_levels(db, prices, broker_factory=engine.default_broker_factory(_md(db)))
     handle_news_sell_signals(db, utcnow() - timedelta(minutes=2), prices)
@@ -161,7 +167,7 @@ def fast_loop(db):
 
 @job("algo_runner")
 def algo_runner(db):
-    if not _market_open(db) or not kite_session.active_token(db):
+    if not _market_open(db) or not md_source.ready(db):
         return {"skipped": True}
     now = utcnow()
     ist = calendar.to_ist(now)
@@ -184,15 +190,15 @@ def algo_runner(db):
 
 @job("news")
 def news_cycle(db):
-    md = _md(db) if kite_session.active_token(db) else None
+    md = _md(db) if md_source.ready(db) else None
     if md is None:
-        return {"skipped": "zerodha not connected (needed for prices/technicals)"}
+        return {"skipped": "no price source (connect Zerodha or set up Angel One)"}
     return pipeline.run_cycle(db, md, broker_factory=engine.default_broker_factory(md))
 
 
 @job("monitor")
 def monitor_scan(db):
-    if not _market_open(db) or not kite_session.active_token(db):
+    if not _market_open(db) or not md_source.ready(db):
         return {"skipped": True}
     md = _md(db)
     return scan(db, md, broker_factory=engine.default_broker_factory(md))
@@ -206,7 +212,7 @@ def token_job(db):
 
 @job("reviews")
 def reviews(db):
-    md = _md(db) if kite_session.active_token(db) else None
+    md = _md(db) if md_source.ready(db) else None
     reviewed = {r for (r,) in db.execute(select(TradeReview.trade_id).where(TradeReview.trade_id.is_not(None)))}
     n = 0
     for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.CLOSED).order_by(Trade.id.desc()).limit(50)):
@@ -218,7 +224,7 @@ def reviews(db):
 
 @job("online_evals")
 def online_evals(db):
-    if not kite_session.active_token(db):
+    if not md_source.ready(db):
         return {"skipped": True}
     md = _md(db)
     return {"scored": online.score_signals(db, md), "unexecuted_reviewed": online.review_unexecuted(db),
@@ -230,7 +236,7 @@ def daily_close(db):
     out = {"promoted": lessons.promote_proposed(db), "retired": lessons.revalidate_active(db), "drift": online.drift_check(db)}
     for l in db.scalars(select(lessons.Lesson).where(lessons.Lesson.status == "TESTING")):
         lessons.validate_out_of_sample(db, l)
-    if kite_session.active_token(db):
+    if md_source.ready(db):
         out["labelled"] = signal_eval.label_outcomes(db, _md(db))
     return out
 
@@ -258,11 +264,53 @@ def telegram_poll(db):
     return {"handled": dispatch.poll_once(db)}
 
 
+@job("stock_daily")
+def stock_daily(db):
+    """After the close: prices + ratios for every listed stock, then run all screens (alerts, signals)."""
+    from syena.screener import data as sdata, screens as sscreens
+
+    if not calendar.is_trading_day(calendar.to_ist(utcnow()).date(), settings_store.get(db, "holidays")):
+        return {"skipped": "holiday"}
+    if not md_source.ready(db):
+        return {"skipped": "no price source"}
+    md = _md(db)
+    out = {"universe": sdata.sync_universe(db, sdata.universe_from_md(db, md))}
+    from syena.screener import sectors
+
+    if sectors.due(db):  # weekly: NSE's sector classification
+        try:
+            out["sectors"] = sectors.sync(db)
+        except Exception as e:
+            out["sectors"] = f"failed: {e}"
+    out["daily"] = sdata.refresh_daily(db, md)
+    out["screens"] = sscreens.run_all(db, md)
+    return out
+
+
+@job("fundamentals")
+def fundamentals(db):
+    """Nightly batch of company figures (stalest first): every stock refreshes about weekly."""
+    from syena.screener import data as sdata
+
+    return sdata.refresh_fundamentals(db)
+
+
+@job("pending_orders")
+def pending_orders(db):
+    from syena.execution.pending import process_pending
+
+    if not db.scalar(select(Order.id).where(Order.purpose == "ENTRY", Order.status == OrderStatus.PLACED).limit(1)):
+        return {"pending": 0}
+    md = _md(db) if md_source.ready(db) else None
+    return process_pending(db, md)
+
+
 @job("instruments")
 def instruments(db):
-    if kite_session.active_token(db):
-        return {"synced": _md(db).sync_instruments()}
-    return {"skipped": True}
+    if not md_source.ready(db):
+        return {"skipped": True}
+    synced = _md(db).sync_instruments()
+    return {"synced": len(synced) if isinstance(synced, dict) else synced}
 
 
 def build_scheduler() -> BlockingScheduler:
@@ -281,6 +329,9 @@ def build_scheduler() -> BlockingScheduler:
     s.add_job(daily_close, "cron", hour=16, minute=30, id="daily_close")
     s.add_job(summary_job, "cron", hour=15, minute=45, day_of_week="mon-fri", id="daily_summary")
     s.add_job(weekly, "cron", day_of_week="sat", hour=10, minute=0, id="weekly")
+    s.add_job(stock_daily, "cron", hour=16, minute=5, day_of_week="mon-fri", id="stock_daily")
+    s.add_job(fundamentals, "cron", hour=20, minute=0, id="fundamentals")
+    s.add_job(pending_orders, "cron", minute="*", second=40, id="pending_orders")
     s.add_job(instruments, "cron", hour=8, minute=30, day_of_week="mon-fri", id="instruments")
     if get_settings().telegram_delivery == "polling":
         from syena.notify import dispatch, telegram

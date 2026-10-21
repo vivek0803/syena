@@ -13,16 +13,16 @@ from dataclasses import dataclass, field
 from syena.algos.rules import RuleError, canon_rule, describe_rule
 
 UNSUPPORTED = {
-    "ichimoku": "Ichimoku", "fibonacci": "Fibonacci", "fib": "Fibonacci", "pivot": "pivot points",
+    "ichimoku": "Ichimoku", "pivot": "pivot points",
     "obv": "OBV", "cci": "CCI", "parabolic": "Parabolic SAR", "psar": "Parabolic SAR", "heikin": "Heikin-Ashi",
     "keltner": "Keltner channels", "donchian": "Donchian channels", "williams": "Williams %R", "mfi": "MFI",
-    "candlestick": "candlestick patterns", "doji": "candlestick patterns", "hammer": "candlestick patterns",
-    "engulfing": "candlestick patterns", "news": "news conditions (use the News strategy)", "earnings": "earnings conditions",
+    "news": "news conditions (use the News strategy)", "earnings": "earnings conditions",
     "options": "options data", "oi": "open interest", "pe": "fundamentals", "eps": "fundamentals",
 }
 VAGUE = ["strong", "weak", "significant", "breakout", "breaks out", "uptrend", "downtrend", "trend is up",
          "trend is down", "momentum", "oversold", "overbought", "spike", "surge", "dip", "good", "bad",
-         "high volume", "low volume", "big", "huge", "sharp", "near", "around", "approximately", "roughly", "touches"]
+         "high volume", "low volume", "big", "huge", "sharp", "near", "around", "approximately", "roughly", "touches",
+         "holds", "bounces", "respects", "support", "resistance", "zone"]
 VOCAB = sorted({
     "sma", "ema", "wma", "rsi", "macd", "bollinger", "band", "bands", "atr", "vwap", "stochastic", "adx",
     "supertrend", "volume", "average", "crosses", "crossed", "cross", "above", "below", "under", "over", "greater",
@@ -30,7 +30,30 @@ VOCAB = sorted({
     "signal", "histogram", "bullish", "bearish", "crossover", "and", "or", "not", "buy", "sell", "when", "exit",
     "stop", "loss", "target", "moving", "exponential", "simple", "weighted", "period", "line", "with", "day",
     "between", "relative", "strength", "index", "true", "range", "golden", "death",
+    "fib", "fibonacci", "retracement", "extension", "swing", "highest", "lowest", "candles", "candle", "bars", "last",
+    "previous", "past", "reaches", "level",
+    "candlestick", "pattern", "engulfing", "hammer", "inverted", "doji", "dragonfly", "gravestone", "harami", "marubozu",
+    "soldiers", "crows", "tweezer", "tweezers", "piercing", "shooting", "star", "morning", "evening", "hanging", "spinning",
+    "trendline", "trend", "inside", "outside", "gap", "forms", "appears", "reversal", "cloud", "cover", "dark", "three",
+    "white", "black", "bottom", "top", "support", "resistance",
 })
+
+# phrase -> candlestick pattern name (longest phrases first so "inverted hammer" wins over "hammer")
+PATTERN_PHRASES = [
+    (r"three white soldiers", "three_white_soldiers"), (r"three black crows", "three_black_crows"),
+    (r"inverted hammer", "inverted_hammer"), (r"dragonfly doji", "dragonfly_doji"), (r"gravestone doji", "gravestone_doji"),
+    (r"bullish engulfing", "bullish_engulfing"), (r"bearish engulfing", "bearish_engulfing"),
+    (r"bullish harami", "bullish_harami"), (r"bearish harami", "bearish_harami"),
+    (r"bullish marubozu|green marubozu", "bullish_marubozu"), (r"bearish marubozu|red marubozu", "bearish_marubozu"),
+    (r"piercing (?:line|pattern)", "piercing_line"), (r"dark cloud cover|dark cloud", "dark_cloud_cover"),
+    (r"morning star", "morning_star"), (r"evening star", "evening_star"), (r"shooting star", "shooting_star"),
+    (r"hanging man", "hanging_man"), (r"tweezers? bottoms?", "tweezer_bottom"), (r"tweezers? tops?", "tweezer_top"),
+    (r"spinning top", "spinning_top"), (r"inside (?:bar|candle)", "inside_bar"), (r"outside (?:bar|candle)", "outside_bar"),
+    (r"gap[- ]?up(?: opening)?", "gap_up"), (r"gap[- ]?down(?: opening)?", "gap_down"),
+    (r"(?:any )?bullish (?:reversal )?(?:candlestick |candle )?pattern", "any_bullish"),
+    (r"(?:any )?bearish (?:reversal )?(?:candlestick |candle )?pattern", "any_bearish"),
+    (r"hammer", "hammer"), (r"doji", "doji"),
+]
 
 
 class Clarify(Exception):
@@ -86,11 +109,98 @@ def _fix_typos(text: str, notes: list[str]) -> str:
     return re.sub(r"[a-z]+", fix, text)
 
 
+LB = r"(?:candles?|bars?|days?|sessions?|periods?)"
+_RANGE_TOK = r"(?:fib_\d+_[\d.]+|fibext_\d+_[\d.]+|hh_\d+|ll_\d+)"
+
+
+def _range_pass(t: str, notes: list[str]) -> str:
+    """Swing high/low and Fibonacci phrases -> tokens: hh_N, ll_N, fib_N_LEVEL, fibext_N_LEVEL."""
+    t = re.sub(r"\bfibonacci\b", "fib", t)
+    t = re.sub(r"\bfib\s+retracements?\b", "fib", t)
+    # "of the last 50 candles" -> "@50" (attached to the swing/fib phrase before it)
+    t = re.sub(r"\s*\b(?:of|over|in|from|for)\s+(?:the\s+)?(?:last|past|previous|prior)\s+(\d+)\s*-?\s*" + LB + r"\b", r" @\1", t)
+
+    # "between fib 50% and fib 61.8% of the last 100 candles": the lookback applies to both levels
+    t = re.sub(r"\bbetween\s+fib\s+(" + NUM + r")\s*%?\s+and\s+(?:fib\s+)?(" + NUM + r")\s*%?\s*@(\d+)",
+               r"between fib \1 @\3 and fib \2 @\3", t)
+
+    def look(n):
+        if n:
+            return int(n)
+        notes.append("swing range defaulted to the last 50 bars")
+        return 50
+
+    t = re.sub(r"\b(?:the\s+)?(\d+)\s*-?\s*" + LB + r"\s+(?:swing high|highest high|range high|high)\b", r"hh_\1", t)
+    t = re.sub(r"\b(?:the\s+)?(\d+)\s*-?\s*" + LB + r"\s+(?:swing low|lowest low|range low|low)\b", r"ll_\1", t)
+    t = re.sub(r"\b(?:the\s+)?(?:swing high|highest high|recent high|range high)(?:\s*@(\d+))?",
+               lambda m: f"hh_{look(m.group(1))}", t)
+    t = re.sub(r"\b(?:the\s+)?(?:swing low|lowest low|recent low|range low)(?:\s*@(\d+))?",
+               lambda m: f"ll_{look(m.group(1))}", t)
+
+    def tok(level, n):
+        lv = float(level)
+        return f"{'fibext' if lv > 100 else 'fib'}_{look(n)}_{lv:g}"
+
+    t = re.sub(r"\bfib\s*\(\s*(\d+)\s*,\s*(" + NUM + r")\s*\)", lambda m: tok(m.group(2), m.group(1)), t)
+    t = re.sub(r"\bfib\s+ext(?:ension)?\s+(" + NUM + r")\s*%?(?:\s*@(\d+))?", lambda m: tok(m.group(1), m.group(2)), t)
+    t = re.sub(r"\b(" + NUM + r")\s*%?\s+(?:fib\s+)?ext(?:ension)?(?:\s*@(\d+))?", lambda m: tok(m.group(1), m.group(2)), t)
+    t = re.sub(r"\bfib(?:\s+level)?\s+(" + NUM + r")\s*%?(?:\s+(?:level|retracement))?(?:\s*@(\d+))?",
+               lambda m: tok(m.group(1), m.group(2)), t)
+    t = re.sub(r"\b(" + NUM + r")\s*%?\s+fib(?:\s+(?:level|retracement))?(?:\s*@(\d+))?", lambda m: tok(m.group(1), m.group(2)), t)
+
+    def pos(token: str) -> tuple[int, float]:
+        parts = token.split("_")
+        if parts[0] == "hh":
+            return int(parts[1]), 1.0
+        if parts[0] == "ll":
+            return int(parts[1]), 0.0
+        lv = float(parts[2]) / 100
+        return int(parts[1]), (lv if parts[0] == "fibext" else 1 - lv)
+
+    def between(m):
+        x, a, b = m.group(1), m.group(2), m.group(3)
+        (na, pa), (nb, pb) = pos(a), pos(b)
+        if na == nb:
+            lo, hi = (a, b) if pa <= pb else (b, a)
+            return f"( {x} >= {lo} and {x} <= {hi} )"
+        return f"( ( {x} >= {a} and {x} <= {b} ) or ( {x} >= {b} and {x} <= {a} ) )"
+
+    t = re.sub(r"([a-z_]+(?: \d+)?) (?:is |trades |stays )?(?:between|inside|within) (?:the )?(" + _RANGE_TOK +
+               r") and (?:the )?(" + _RANGE_TOK + r")(?: zone)?", between, t)
+    return t
+
+
+def _pattern_pass(t: str, notes: list[str]) -> str:
+    """Candlestick patterns -> pat_NAME tokens; trendlines -> tls_N (support) / tlr_N (resistance)."""
+    t = re.sub(r"\btrend[\s-]+lines?\b", "trendline", t)
+
+    def n_of(m, group=1):
+        if m.group(group):
+            return int(m.group(group))
+        notes.append("trendline drawn through the last two swing points of the past 50 bars")
+        return 50
+
+    t = re.sub(r"\b(?:the )?(?:rising |ascending |falling |descending )?(?:trendline (support|resistance)|(support|resistance) trendline)(?:\s*@(\d+))?",
+               lambda m: f"{'tls' if (m.group(1) or m.group(2)) == 'support' else 'tlr'}_{n_of(m, 3)}", t)
+    # "breaks (out) above the trendline" = resistance breakout; "breaks below the trendline" = support breakdown
+    t = re.sub(r"\b(?:breaks?|broke|crosses|crossed|moves?)(?: out)? (above|over|up through) (?:the )?trendline(?:\s*@(\d+))?",
+               lambda m: f"crosses above tlr_{n_of(m, 2)}", t)
+    t = re.sub(r"\b(?:breaks?|broke|crosses|crossed|moves?)(?: down)? (below|under|down through) (?:the )?trendline(?:\s*@(\d+))?",
+               lambda m: f"crosses below tls_{n_of(m, 2)}", t)
+    t = re.sub(r"\btrendline breakout(?:\s*@(\d+))?", lambda m: f"close crosses above tlr_{n_of(m)}", t)
+    t = re.sub(r"\btrendline breakdown(?:\s*@(\d+))?", lambda m: f"close crosses below tls_{n_of(m)}", t)
+    for phrase, name in PATTERN_PHRASES:
+        t = re.sub(r"\b(?:a |an |the )?" + phrase + r"(?: candlestick| candle)?(?: pattern)?\b", f" pat_{name} ", t)
+    return t
+
+
 def normalise(text: str, notes: list[str]) -> str:
     t = " " + text.lower().strip() + " "
     t = t.replace("’", "'").replace("–", "-").replace("—", "-")
     t = re.sub(r"(\d),(\d{3})", r"\1\2", t)  # 1,500 -> 1500
     t = _fix_typos(t, notes)
+    t = _range_pass(t, notes)
+    t = _pattern_pass(t, notes)
     subs = [
         (r"exponential moving average", "ema"), (r"simple moving average", "sma"), (r"weighted moving average", "wma"),
         (r"relative strength index", "rsi"), (r"average true range", "atr"), (r"bollinger bands?", "bb"),
@@ -181,6 +291,19 @@ def _operand(s: str, notes: list[str], other: dict | None = None) -> dict:
         return _ind(name, n=int(n or 14))
     if s == "vwap":
         return _ind("vwap")
+    m = re.fullmatch(r"(hh|ll)_(\d+)", s)
+    if m:
+        return _ind("highest" if m.group(1) == "hh" else "lowest", n=int(m.group(2)))
+    m = re.fullmatch(r"(tls|tlr)_(\d+)", s)
+    if m:
+        return _ind("trendline_support" if m.group(1) == "tls" else "trendline_resistance", n=int(m.group(2)))
+    if s in ("trendline", "trendline support", "trendline resistance"):
+        raise Clarify("Which trendline: support (through recent swing lows) or resistance (through recent swing highs)?")
+    m = re.fullmatch(r"(fib|fibext)_(\d+)_(" + NUM + r")", s)
+    if m:
+        return _ind("fib" if m.group(1) == "fib" else "fib_ext", n=int(m.group(2)), level=float(m.group(3)))
+    if re.fullmatch(r"fib(?: ext(?:ension)?)?", s):
+        raise Clarify("Which Fibonacci level? e.g. 'fib 61.8% of the last 50 candles' or 'fib extension 161.8'.")
     m = re.fullmatch(r"macd_(\d+)_(\d+)_(\d+)(?: (line|signal|signal line|histogram|hist))?", s)
     if m:
         out = {"line": "macd", None: "macd", "signal": "signal", "signal line": "signal", "histogram": "hist", "hist": "hist"}[m.group(4)]
@@ -238,7 +361,7 @@ def _operand(s: str, notes: list[str], other: dict | None = None) -> dict:
 CROSS_UP = r"(?:crosses|crossed|cross|crossing|breaks|broke|moves|goes) (?:above|over|up through|up)"
 CROSS_DN = r"(?:crosses|crossed|cross|crossing|breaks|broke|moves|goes) (?:below|under|down through|down)"
 CMP_PATTERNS = [
-    (r"(?:is )?greater than or equal to|>=|(?:is )?at least", ">="),
+    (r"(?:is )?greater than or equal to|>=|(?:is )?at least|(?:reaches|reached|hits|hit)", ">="),
     (r"(?:is )?less than or equal to|<=|(?:is )?at most", "<="),
     (r"(?:closes|closed|close|trades|is trading|stays|remains|is) (?:above|over|higher than)|(?:is )?greater than|(?:is )?higher than|(?:is )?above|(?:is )?over|exceeds|>", ">"),
     (r"(?:closes|closed|close|trades|is trading|stays|remains|is) (?:below|under|lower than)|(?:is )?less than|(?:is )?lower than|(?:is )?below|(?:is )?under|<", "<"),
@@ -249,6 +372,13 @@ def _clause(c: str, notes: list[str], ctx: dict) -> dict:
     c = c.strip(" ,.;")
     if not c:
         raise Unparsed("empty condition")
+    m = re.fullmatch(r"(?:(?:there is|there's|we see|we get|you see|on|with|the|last|previous|today'?s?|daily|candle|candle is|"
+                     r"forms?|formed|is|a|an)\s+)*pat_([a-z_]+)(?:\s+(?:candle|candlestick|pattern|forms?|formed|appears|is formed|"
+                     r"prints?|printed|occurs|shows up|on the chart|today))*", c)
+    if m:
+        if m.group(1) in ("doji", "spinning_top", "inside_bar", "outside_bar"):
+            notes.append(f"'{m.group(1).replace('_', ' ')}' is an indecision candle: consider pairing it with a trend condition")
+        return {"op": "pattern", "name": m.group(1)}
     if re.search(r"\b(equals?|==|=)\b|(?<![<>])=(?!=)", c):
         raise Clarify("Exact equality on prices/indicators almost never triggers. Use above/below or a crossover.")
     m = re.fullmatch(r"macd(?:_(\d+)_(\d+)_(\d+))?(?: line)? (?:(bullish|bearish) (?:crossover|cross)|crossover|crosses (above|below) (?:the )?signal(?: line)?)", c)
@@ -375,7 +505,8 @@ def parse_deterministic(text: str) -> ParseOutput:
         for w, label in UNSUPPORTED.items():
             if w in words:
                 raise Clarify(f"{label} is not supported yet. Supported: SMA, EMA, WMA, RSI, MACD, Bollinger, ATR, VWAP, "
-                              "Stochastic, ADX, Supertrend, volume, OHLC.", "unsupported")
+                              "Stochastic, ADX, Supertrend, swing high/low, Fibonacci, trendlines, candlestick patterns, "
+                              "volume, OHLC.", "unsupported")
         if re.match(r"^(short|sell short|go short|short sell)\b", t) or re.search(r"\bshort (when|if|on)\b", t):
             raise Clarify("Short selling isn't supported; rules are long-only (BUY then SELL).", "unsupported")
         for v in VAGUE:

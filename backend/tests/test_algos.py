@@ -4,6 +4,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import pytest
+from sqlalchemy import select
 
 from syena.algos import indicators as ind
 from syena.algos import parser
@@ -130,3 +131,57 @@ def test_live_gate_blocks_without_paper_history(db, user):
     assert not gate["paper_trades"] and not gate["paper_days"]
     with pytest.raises(RuleError):
         svc.enable_live(db, algo)
+
+
+def _open_algo_trade(db, md, monkeypatch):
+    from syena.execution.brokers import PaperBroker
+
+    algo, _ = svc.build(db, "buy when close > sma 20", Style.SWING, "PAPER", ["INFY"], "day", None)
+    monkeypatch.setattr(svc, "utcnow", lambda: md.frames[("INFY", "day")].index[-1].to_pydatetime())
+    svc.run_backtest(db, algo, md)
+    svc.start(db, algo)
+    df = md.frames[("INFY", "day")]
+    sig = evaluate(df, algo.parsed_rule["entry"]).to_numpy()
+    i = [k for k in range(len(df) - 1) if sig[k]][-1]
+    now = df.index[i + 1].to_pydatetime().astimezone(IST).replace(hour=11)
+    md.as_of = now
+    svc.tick_algo(db, algo, md, now=now, broker_factory=lambda d, m: PaperBroker())
+    from syena.models import Trade, TradeStatus
+
+    t = db.scalar(select(Trade).where(Trade.algo_id == algo.id, Trade.status == TradeStatus.OPEN))
+    assert t is not None
+    return algo, t, now
+
+
+@pytest.mark.parametrize("sell_on_leave", [True, False])
+def test_position_managed_after_stock_leaves_screen(db, user, md, monkeypatch, sell_on_leave):
+    from syena.execution.brokers import PaperBroker
+    from syena.models import Screen, TradeStatus
+
+    algo, t, now = _open_algo_trade(db, md, monkeypatch)
+    db.add(Screen(name="q", conditions="roe > 15", algo_id=algo.id, exit_on_removal=sell_on_leave))
+    algo.symbols = ["TCS"]  # the daily screen run dropped INFY
+    db.commit()
+    svc.tick_algo(db, algo, md, now=now, broker_factory=lambda d, m: PaperBroker())
+    db.refresh(t)
+    if sell_on_leave:
+        assert t.status == TradeStatus.CLOSED and t.exit_reason == "left_screen"
+    else:
+        assert t.status == TradeStatus.OPEN  # still held; its exit rule / stop / target keep watching it
+
+
+def test_backtest_skips_stocks_without_data(db, user, md, monkeypatch):
+    algo, _ = svc.build(db, "buy when close > sma 20", Style.SWING, "PAPER", ["INFY", "NOPE", "TCS"], "day", None)
+    monkeypatch.setattr(svc, "utcnow", lambda: md.frames[("INFY", "day")].index[-1].to_pydatetime())
+    real = md.candles
+    def candles(sym, *a, **k):
+        if sym == "NOPE":
+            raise RuntimeError("Angel One: too many requests")
+        return real(sym, *a, **k)
+    monkeypatch.setattr(md, "candles", candles)
+    report = svc.run_backtest(db, algo, md)
+    assert report["config"]["symbols"] == ["INFY", "TCS"]
+    assert report["failed_symbols"][0]["symbol"] == "NOPE" and "too many" in report["failed_symbols"][0]["reason"]
+    algo.symbols = ["NOPE"]
+    with pytest.raises(RuleError, match="No price history"):
+        svc.run_backtest(db, algo, md)

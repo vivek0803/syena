@@ -33,8 +33,12 @@ def counterfactuals(trade: Trade, path: pd.DataFrame) -> dict:
         return {"note": "no price path available"}
     entry, qty = trade.entry_price, trade.qty
     intraday = trade.style.value == "INTRADAY"
-    stop_d = (entry - trade.stop_loss) if trade.stop_loss else entry * 0.02
-    tgt_d = (trade.target - entry) if trade.target else entry * 0.04
+    short = trade.side == "SELL"
+    if short:  # mirror prices around the entry so a short is simulated exactly like a long
+        path = pd.DataFrame({"open": 2 * entry - path["open"], "high": 2 * entry - path["low"],
+                             "low": 2 * entry - path["high"], "close": 2 * entry - path["close"]}, index=path.index)
+    stop_d = abs(entry - trade.stop_loss) if trade.stop_loss else entry * 0.02
+    tgt_d = abs(trade.target - entry) if trade.target else entry * 0.04
 
     def sim(stop_mult, tgt_mult):
         stop, tgt = entry - stop_d * stop_mult, entry + tgt_d * tgt_mult
@@ -48,12 +52,13 @@ def counterfactuals(trade: Trade, path: pd.DataFrame) -> dict:
         else:
             px, why = float(path["close"].iloc[-1]), "end_of_window"
         pnl = (px - entry) * qty - round_trip(qty, entry, px, intraday)
-        return {"pnl": round(pnl, 2), "exit": round(float(px), 2), "by": why}
+        real = 2 * entry - px if short else px
+        return {"pnl": round(pnl, 2), "exit": round(float(real), 2), "by": why}
 
     return {"actual_pnl": trade.profit_loss, "wider_stop_1.5x": sim(1.5, 1), "tighter_stop_0.5x": sim(0.5, 1),
             "target_0.5x": sim(1, 0.5), "target_1.5x": sim(1, 1.5), "skip": {"pnl": 0.0},
             "max_favourable_pct": round(float(path["high"].max() / entry * 100 - 100), 3),
-            "max_adverse_pct": round(float(path["low"].min() / entry * 100 - 100), 3)}
+            "max_adverse_pct": round(float(path["low"].min() / entry * 100 - 100), 3), "side": trade.side}
 
 
 def _record(db: Session, trade: Trade) -> dict:

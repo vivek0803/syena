@@ -10,6 +10,25 @@ from sqlalchemy.orm import Session
 from syena.db import utcnow
 from syena.models import AppSetting
 
+# Earlier default lists: a saved list identical to one of these is upgraded to the current default automatically.
+OLD_DEFAULT_FEEDS = [
+    {"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml", "https://www.moneycontrol.com/rss/marketreports.xml",
+     "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms", "https://www.livemint.com/rss/markets"},
+    {"https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml", "https://www.moneycontrol.com/rss/buzzingstocks.xml", "https://www.moneycontrol.com/rss/latestnews.xml", "https://www.moneycontrol.com/rss/results.xml", "https://www.moneycontrol.com/rss/marketreports.xml", "https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2146842.cms", "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms", "https://www.livemint.com/rss/companies", "https://www.livemint.com/rss/markets", "https://www.business-standard.com/rss/markets-106.rss", "https://www.business-standard.com/rss/companies-101.rss", "https://news.google.com/rss/search?q=NSE+shares+(order+OR+results+OR+acquisition+OR+stake+OR+rating)+when:1d&hl=en-IN&gl=IN&ceid=IN:en"},
+]
+# Moneycontrol is left out: it blocks automated readers (403/502).
+DEFAULT_FEEDS = [
+    {"name": "NSE announcements", "url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"},
+    {"name": "ET stocks news", "url": "https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2146842.cms"},
+    {"name": "ET markets", "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"},
+    {"name": "Livemint companies", "url": "https://www.livemint.com/rss/companies"},
+    {"name": "Livemint markets", "url": "https://www.livemint.com/rss/markets"},
+    {"name": "Business Standard markets", "url": "https://www.business-standard.com/rss/markets-106.rss"},
+    {"name": "Business Standard companies", "url": "https://www.business-standard.com/rss/companies-101.rss"},
+    {"name": "Google News: NSE stocks", "url": "https://news.google.com/rss/search?q=NSE+shares+(order+OR+results+OR+acquisition+OR+stake+OR+rating)+when:1d&hl=en-IN&gl=IN&ceid=IN:en"},
+    {"name": "Google News: Q2 results", "url": "https://news.google.com/rss/search?q=(Q2+results+OR+quarterly+results)+NSE+when:1d&hl=en-IN&gl=IN&ceid=IN:en"},
+]
+
 DEFAULTS: dict[str, Any] = {
     "sizing": {"min_amount": 7000.0, "max_amount": 10000.0},
     "risk": {
@@ -19,7 +38,13 @@ DEFAULTS: dict[str, Any] = {
         "max_trades_per_day": 10,
         "max_consecutive_broker_errors": 3,
     },
-    "trade_gate": {"confidence_threshold": 70, "require_technical_agreement": True, "min_market_context": -0.3},
+    # News trades: the final score is a weighted blend (news / technicals / market, in %) and must reach
+    # confidence_threshold. Technicals and the market no longer veto on their own: they only add or subtract weight.
+    "trade_gate": {"confidence_threshold": 70, "weights": {"news": 80, "technicals": 15, "market": 5},
+                   # liquidity: skip companies too small or too thinly traded to enter and exit cleanly (0 = off)
+                   "min_market_cap_cr": 1000, "min_avg_turnover_cr": 2,
+                   # the target must be at least this many times the distance to the stop-loss
+                   "min_reward_risk": 1.5},
     "styles": {
         "intraday_entry_cutoff": "14:45",
         "intraday_square_off": "15:10",
@@ -31,6 +56,15 @@ DEFAULTS: dict[str, Any] = {
         "swing_gap_down_exit_pct": 4.0,
     },
     "paper": {"starting_balance": 100000.0, "slippage_bps": 5.0},
+    # After-market orders: entries signalled while the market is closed are queued for the next open
+    # (swing / long-term only). Limit = signal price + max_gap_pct, so a big gap-up is not chased;
+    # unfilled AMO entries are cancelled at cancel_unfilled_after IST.
+    # Signals while the market is closed wait in Syena's queue; Syena places them itself after `place_after` at the
+    # next open (skipping the opening-minute spike), unless the price opened more than max_gap_pct against the trade.
+    "amo": {"enabled": True, "place_after": "09:16", "max_gap_pct": 2.0, "cancel_unfilled_after": "10:00"},
+    # Fundamental screener: company figures refresh a batch of stocks every night (whole universe ~weekly).
+    "screener": {"fundamentals_per_night": 400, "fundamentals_max_age_days": 7, "prefer_csv_days": 100,
+                 "signal_lookback_days": 400},
     "orders": {"prefer_limit": True, "limit_buffer_bps": 10.0, "market_protection_pct": 2.0, "max_retries": 3},
     "market_context": {"w_nifty": 0.5, "w_sensex": 0.2, "w_vix": 0.3, "nifty_scale_pct": 1.0, "vix_scale_pct": 5.0},
     "models": {
@@ -51,16 +85,23 @@ DEFAULTS: dict[str, Any] = {
     "ai_budget": {"daily_usd": 5.0},
     "monitor": {"scan_minutes": 30, "snooze_minutes": 60, "negative_news_sentiment": -0.5},
     "news": {
-        "poll_minutes": 5,
+        "poll_minutes": 1,  # news goes stale after 15 minutes: check every minute
         "style": "SWING",
-        "max_items_per_run": 40,
-        "max_age_hours": 6,
-        "feeds": [
-            {"name": "NSE announcements", "url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"},
-            {"name": "Moneycontrol markets", "url": "https://www.moneycontrol.com/rss/marketreports.xml"},
-            {"name": "Economic Times markets", "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"},
-            {"name": "Livemint markets", "url": "https://www.livemint.com/rss/markets"},
-        ],
+        # AI says SELL (and you don't hold it): sell short intraday (MIS) and buy back the same day by square-off.
+        "short_selling": True,
+        "max_items_per_run": 60,
+        # News older than this (by its published time) is skipped: no AI call, no trade.
+        "max_age_minutes": 15,
+        # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
+        "symbol_dedup_minutes": 30,
+        "read_images": True,  # read text in Telegram post images with the AI (triage model)
+        # candlestick patterns + trendlines shown to the AI for each analysed stock, per timeframe, over this many days
+        "pattern_timeframes": ["day", "60minute", "15minute", "5minute", "minute"],
+        "pattern_lookback_days": 30,
+        "telegram_channels": ["moneypurseadv"],
+        # Stock-specific sources first; general market commentary rarely names a company. A feed that fails is
+        # shown on the News page (Sources) and can be switched off with "enabled": false.
+        "feeds": DEFAULT_FEEDS,
         "watchlist": ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "ITC", "LT", "BHARTIARTL", "AXISBANK"],
     },
     "evals": {
@@ -115,7 +156,11 @@ def get(db: Session, key: str) -> Any:
     if key not in DEFAULTS:
         raise KeyError(key)
     row = db.get(AppSetting, key)
-    return _merge(DEFAULTS[key], row.value if row else None)
+    value = _merge(DEFAULTS[key], row.value if row else None)
+    if key == "news" and isinstance(value.get("feeds"), list) and \
+            {f.get("url") for f in value["feeds"]} in OLD_DEFAULT_FEEDS:
+        value["feeds"] = DEFAULT_FEEDS  # still on the original four feeds: upgrade to the fuller default list
+    return value
 
 
 def get_all(db: Session) -> dict[str, Any]:

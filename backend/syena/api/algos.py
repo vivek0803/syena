@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from syena.algos import parser
@@ -12,7 +12,7 @@ from syena.api.common import market_data, ser
 from syena.api.deps import AuthContext, authenticated
 from syena.db import get_db, utcnow
 from syena.market.data import INTERVALS
-from syena.models import Algo, Decision, Signal, Style, User
+from syena.models import Algo, Decision, Screen, Signal, Style, Trade, TradeStatus, User
 from syena.services.auth import verify_credentials
 
 router = APIRouter(prefix="/api/algos", tags=["algos"], dependencies=[Depends(authenticated)])
@@ -22,7 +22,7 @@ class BuildIn(BaseModel):
     text: str = Field(max_length=2000)
     style: Style
     run_mode: str = Field(pattern="^(BACKTEST|PAPER|LIVE)$")
-    symbols: list[str] = Field(default_factory=list, max_length=25)
+    symbols: list[str] = Field(default_factory=list)
     timeframe: str = "15minute"
     name: str | None = Field(default=None, max_length=120)
 
@@ -43,7 +43,8 @@ class ReauthIn(BaseModel):
 def algo_out(a: Algo, db: Session) -> dict:
     return ser(a, extra={"readable": describe_rule(a.parsed_rule) if a.parsed_rule else None,
                          "backtest_result": None, "has_backtest": a.backtest_result is not None,
-                         "metrics": (a.backtest_result or {}).get("metrics")})
+                         "metrics": (a.backtest_result or {}).get("metrics"),
+                         "screen_linked": db.scalar(select(Screen.id).where(Screen.algo_id == a.id).limit(1)) is not None})
 
 
 @router.post("/parse")
@@ -53,7 +54,7 @@ def parse_preview(body: BuildIn, db: Session = Depends(get_db)):
 
 @router.get("")
 def list_algos(db: Session = Depends(get_db)):
-    return [algo_out(a, db) for a in db.scalars(select(Algo).order_by(Algo.id.desc()))]
+    return [algo_out(a, db) for a in db.scalars(select(Algo).where(Algo.status != "DELETED").order_by(Algo.id.desc()))]
 
 
 @router.post("")
@@ -107,10 +108,17 @@ def patch_algo(algo_id: int, body: PatchIn, db: Session = Depends(get_db)):
     a = _get(db, algo_id)
     if a.status == "RUNNING":
         raise HTTPException(409, "stop the algo before editing")
+    changed = False
     for k, v in body.model_dump(exclude_none=True).items():
         if k == "timeframe" and v not in INTERVALS:
             raise HTTPException(400, "bad timeframe")
-        setattr(a, k, [s.strip().upper() for s in v] if k == "symbols" else v)
+        if k == "symbols":
+            v = list(dict.fromkeys(s.strip().upper() for s in v if s.strip()))
+        if k in ("symbols", "timeframe", "style") and v != getattr(a, k):
+            changed = True
+        setattr(a, k, v)
+    if changed and a.status in ("CONFIRMED", "STOPPED"):  # the old backtest no longer describes this algo
+        a.status, a.backtest_passed, a.live_enabled = "DRAFT", False, False
     a.live_enabled = a.live_enabled and a.run_mode == "LIVE"
     db.commit()
     return algo_out(a, db)
@@ -146,6 +154,29 @@ def start(algo_id: int, db: Session = Depends(get_db)):
         return algo_out(svc.start(db, _get(db, algo_id)), db)
     except RuleError as e:
         raise HTTPException(400, str(e))
+
+
+@router.delete("/{algo_id}")
+def delete_algo(algo_id: int, db: Session = Depends(get_db)):
+    """Delete a strategy. Refused while it has open positions. If it has ever produced signals, decisions or
+    trades it is hidden (status DELETED) so the Decision Log keeps its history; otherwise it is removed."""
+    a = _get(db, algo_id)
+    if a.kind == "news":
+        raise HTTPException(400, "The AI news strategy is built in and can't be deleted. Stop it instead, or switch news "
+                                 "trading off in Settings.")
+    open_n = db.scalar(select(func.count()).select_from(Trade).where(
+        Trade.algo_id == a.id, Trade.status.in_((TradeStatus.OPEN, TradeStatus.PENDING)))) or 0
+    if open_n:
+        raise HTTPException(409, f"This algo still has {open_n} open or pending position(s). Close them first "
+                                 "(Trades page), then delete it.")
+    used = any(db.scalar(select(m.id).where(m.algo_id == a.id).limit(1)) for m in (Signal, Decision, Trade))
+    if used:
+        a.status, a.live_enabled = "DELETED", False
+        a.name = a.name if a.name.endswith(" (deleted)") else f"{a.name[:110]} (deleted)"
+    else:
+        db.delete(a)
+    db.commit()
+    return {"deleted": True, "kept_history": used}
 
 
 @router.post("/{algo_id}/stop")

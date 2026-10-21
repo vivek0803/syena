@@ -15,6 +15,9 @@ x-backend: &backend
     SYENA_PUBLIC_ORIGIN: http://127.0.0.1:8080
     SYENA_TELEGRAM_DELIVERY: polling
     SYENA_DATABASE_URL: postgresql+psycopg://syena:${POSTGRES_PASSWORD}@db:5432/syena
+    SYENA_LOG_DIR: /logs
+  volumes:
+    - ../windows/logs:/logs   # api.log and worker.log appear in the windows\logs folder
   depends_on:
     db:
       condition: service_healthy

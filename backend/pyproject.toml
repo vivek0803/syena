@@ -26,6 +26,8 @@ dependencies = [
     "openpyxl>=3.1",
     "pyyaml>=6.0",
     "qrcode>=7.4",
+    "yfinance>=0.2.54",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

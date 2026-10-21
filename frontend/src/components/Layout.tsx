@@ -7,7 +7,7 @@ import { ModeBadge, Modal, useToast } from "./ui";
 
 const nav: { group: string; items: [string, string][] }[] = [
   { group: "Overview", items: [["/", "Dashboard"], ["/decisions", "Decision log"]] },
-  { group: "Trade", items: [["/algos", "Algo builder"], ["/invest", "Manual invest"], ["/trades", "Trades & positions"], ["/orders", "Orders"]] },
+  { group: "Trade", items: [["/algos", "Algo builder"], ["/invest", "Manual invest"], ["/screener", "Screener"], ["/compare", "Compare stocks"], ["/stock", "Stock charts"], ["/trades", "Trades & positions"], ["/orders", "Orders"]] },
   { group: "Understand", items: [["/news", "News feed"], ["/portfolio", "Portfolio X-Ray"], ["/evals", "Evals"], ["/learning", "Learning"]] },
   { group: "System", items: [["/logs", "Logs"], ["/settings", "Settings"]] },
 ];

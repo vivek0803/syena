@@ -44,7 +44,7 @@ class LLMResult:
 
 
 class Backend:
-    def complete(self, model: str, system: str, user: str, max_tokens: int) -> tuple[str, int, int]:
+    def complete(self, model: str, system: str, user: str, max_tokens: int, images=None, temperature=None) -> tuple[str, int, int]:
         raise NotImplementedError
 
 
@@ -54,10 +54,25 @@ class AnthropicBackend(Backend):
 
         self.client = anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=60)
 
-    def complete(self, model, system, user, max_tokens):
-        r = self.client.messages.create(
-            model=model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": user}]
-        )
+    def complete(self, model, system, user, max_tokens, images=None, temperature=None):
+        content = user
+        if images:  # [(media_type, bytes)] -> image blocks followed by the text
+            import base64
+
+            content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(b).decode()}}
+                       for mt, b in images] + [{"type": "text", "text": user}]
+        kw = {"temperature": temperature} if temperature is not None else {}
+        try:
+            r = self.client.messages.create(
+                model=model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": content}], **kw
+            )
+        except Exception as e:  # a model that doesn't take a temperature: ask again without it
+            if not kw or "temperature" not in str(e).lower():
+                raise
+            r = self.client.messages.create(model=model, max_tokens=max_tokens, system=system,
+                                            messages=[{"role": "user", "content": content}])
+        if getattr(r, "stop_reason", None) == "max_tokens":
+            log.warning("AI answer cut off at the token limit", extra={"model": model, "max_tokens": max_tokens})
         text = "".join(getattr(b, "text", "") for b in r.content)
         return text, r.usage.input_tokens, r.usage.output_tokens
 
@@ -69,9 +84,9 @@ class FakeBackend(Backend):
         self.handler = handler
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, model, system, user, max_tokens):
+    def complete(self, model, system, user, max_tokens, images=None, temperature=None):
         self.calls.append((model, user))
-        out = self.handler(model, system, user)
+        out = self.handler(model, system, user + (f"\n[{len(images)} image(s)]" if images else ""))
         return out, len(system + user) // 4, len(out) // 4
 
 
@@ -136,7 +151,7 @@ def extract_json(text: str) -> dict:
 
 def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None, model: str | None = None,
          variables: dict | None = None, max_tokens: int = 1200, want_json: bool = True, shadow: bool = False,
-         eval_run_id: int | None = None) -> LLMResult:
+         eval_run_id: int | None = None, images: list | None = None, temperature: float | None = None) -> LLMResult:
     prompt = PROMPTS[prompt_name]
     model = model or (model_for(db, tier) if tier else None)
     if not model:
@@ -154,7 +169,10 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
                      prompt_version=prompt.version, prompt=f"[system]\n{system}\n\n[user]\n{u}", shadow=shadow,
                      eval_run_id=eval_run_id)
         try:
-            text, tin, tout = be.complete(model, system, u, max_tokens)
+            # second attempt gets more room: a truncated answer is the usual cause of unparseable JSON
+            text, tin, tout = be.complete(model, system, u, max_tokens if attempt == 0 else max(max_tokens * 2, 1000),
+                                          **({"images": images} if images else {}),
+                                          **({"temperature": temperature} if temperature is not None else {}))
             row.response_raw, row.input_tokens, row.output_tokens = text, tin, tout
             row.cost_usd = cost(db, model, tin, tout)
             row.latency_ms = int((time.monotonic() - t0) * 1000)
@@ -165,6 +183,9 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
         except (LLMBadOutput, json.JSONDecodeError) as e:
             last_err = e
             row.success, row.error = False, f"bad output: {e}"
+            log.warning("AI answer not valid JSON", extra={"purpose": purpose, "model": model, "attempt": attempt + 1,
+                                                           "output_tokens": row.output_tokens,
+                                                           "snippet": (row.response_raw or "")[:300]})
         except Exception as e:  # API errors
             last_err = e
             row.success, row.error = False, f"{type(e).__name__}: {e}"

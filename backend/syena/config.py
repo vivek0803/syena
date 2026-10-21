@@ -6,12 +6,18 @@ the database and can only be changed through the authenticated API.
 """
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SYENA_", env_file=".env", extra="ignore")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        # Env files edited in Notepad can carry stray spaces or \r characters.
+        return v.strip() if isinstance(v, str) else v
 
     env: str = "dev"  # dev | test | prod
     database_url: str = "sqlite:///./syena.db"
@@ -40,6 +46,12 @@ class Settings(BaseSettings):
     kite_api_key: str = ""
     kite_api_secret: SecretStr = Field(default=SecretStr(""))
     angel_api_key: str = ""
+    # Angel One auto-login for market data (free live + historical prices)
+    angel_client_id: str = ""
+    angel_pin: SecretStr = Field(default=SecretStr(""))
+    angel_totp_secret: SecretStr = Field(default=SecretStr(""))
+    # Price source: "angel" (free SmartAPI) or "kite" (needs a paid Kite Connect app)
+    market_data: str = "kite"
 
     # AI
     anthropic_api_key: SecretStr = Field(default=SecretStr(""))
@@ -61,7 +73,7 @@ class Settings(BaseSettings):
 
     def secret_values(self) -> list[str]:
         """All secret values, scrubbed from log output as a last line of defence."""
-        return [v.get_secret_value() for v in (self.encryption_key, self.kite_api_secret, self.anthropic_api_key,
+        return [v.get_secret_value() for v in (self.encryption_key, self.kite_api_secret, self.anthropic_api_key, self.angel_pin, self.angel_totp_secret,
                                                self.telegram_bot_token, self.telegram_webhook_secret) if v.get_secret_value()]
 
 

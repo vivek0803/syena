@@ -16,6 +16,7 @@ def _enum(e):
 class Style(str, enum.Enum):
     INTRADAY = "INTRADAY"  # Kite product MIS
     SWING = "SWING"  # Kite product CNC
+    LONG_TERM = "LONG_TERM"  # Kite product CNC, held for months/years: no gap-down exit, no default holding limit
 
 
 class Side(str, enum.Enum):
@@ -27,7 +28,9 @@ class DecisionType(str, enum.Enum):
     PLACED = "PLACED"
     REJECTED = "REJECTED"
     SKIPPED = "SKIPPED"
-    HELD = "HELD"
+    HELD = "HELD"  # an exit order is still working at the broker
+    HOLD = "HOLD"  # (older records) the AI's verdict on news was HOLD; new ones are REJECTED with that reason
+    ERROR = "ERROR"  # something failed (no price data, AI/broker error): nothing was decided
     EXITED = "EXITED"
 
 
@@ -169,6 +172,7 @@ class Order(Base):
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     product: Mapped[str] = mapped_column(String(4))  # MIS | CNC
     purpose: Mapped[str] = mapped_column(String(8))  # ENTRY | EXIT
+    variety: Mapped[str] = mapped_column(String(8), default="regular", server_default="regular")  # regular | amo
     status: Mapped[OrderStatus] = mapped_column(_enum(OrderStatus), default=OrderStatus.PENDING)
     broker_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)

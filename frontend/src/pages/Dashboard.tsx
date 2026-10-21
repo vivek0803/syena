@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Empty, ErrorNote, Loading, Page, Panel, Pill, Stat, Table, decisionTone } from "../components/ui";
+import { Empty, ErrorNote, Loading, Page, Panel, Pill, Stat, Table, decisionLabel, decisionTone } from "../components/ui";
 import { ago, money, signed, tone, when } from "../lib/format";
 import { useApi } from "../lib/hooks";
 
@@ -16,7 +16,8 @@ export default function Dashboard() {
   const healthRows: [string, string, boolean][] = [
     ["Background worker", h.worker === "ok" ? "running" : h.worker, h.worker === "ok"],
     ["Zerodha session", d.kite.connected ? `valid until ${when(d.kite.expires_at)}` : d.kite.configured ? "not connected today" : "API key not set", d.kite.connected],
-    ["Angel One", d.angel.connected ? `connected until ${when(d.angel.expires_at)}` : "not connected (holdings only)", d.angel.connected],
+    ["Price data", `${d.prices?.provider === "angel" ? "Angel One (free)" : "Zerodha Kite"}${d.prices?.ready ? "" : ": not set up"}`, !!d.prices?.ready],
+    ["Angel One", d.angel.connected ? `connected until ${when(d.angel.expires_at)}` : "not connected", d.angel.connected],
     ["AI models", h.ai_configured ? `$${h.ai_spend_today_usd.toFixed(3)} of $${h.ai_budget_usd} today` : "no API key: AI features off", h.ai_configured],
     ["Telegram alerts", h.telegram ? "configured" : "not configured", h.telegram],
     ["Market", d.market_open ? "open" : "closed", d.market_open],
@@ -64,7 +65,7 @@ export default function Dashboard() {
             {d.recent_decisions.map((x: any) => (
               <li key={x.id}>
                 <Link to={`/decisions/${x.id}`} className="flex items-start gap-3 border-t border-dusk-line/70 px-4 py-2.5 first:border-t-0 hover:bg-dusk-raised/50">
-                  <Pill tone={decisionTone(x.type)}>{x.type.toLowerCase()}</Pill>
+                  <Pill tone={decisionTone(x.type, x.side)}>{decisionLabel(x)}</Pill>
                   <div className="min-w-0 flex-1">
                     <div className="truncate"><span className="font-semibold">{x.symbol}</span> <span className="text-parch-dim">{x.summary}</span></div>
                     <div className="text-[13px] text-mute">{x.source} · {x.mode} · {when(x.ts)}</div>

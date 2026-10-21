@@ -30,6 +30,8 @@ class OrderRequest:
     ref_price: float  # latest known price
     order_type: str = "LIMIT"
     limit_price: float | None = None
+    variety: str = "regular"  # regular | amo (after-market order, executes at the next open)
+    entry_price: float | None = None  # exits only: the position's entry price (paper margin for shorts)
 
 
 @dataclass
@@ -89,6 +91,9 @@ class PaperBroker:
         self.ltp_fn = ltp_fn
 
     def place(self, db: Session, req: OrderRequest) -> OrderResult:
+        if req.variety == "amo":  # queued: filled by fill_amo() once the market opens
+            return OrderResult("PLACED", broker_order_id=f"PAPER-AMO-{req.idempotency_key[:12]}",
+                               message=f"after-market order queued for next open (limit {req.limit_price})")
         cfg = settings_store.get(db, "paper")
         quote = (self.ltp_fn(req.symbol) if self.ltp_fn else None) or req.ref_price
         if not quote or quote <= 0:
@@ -101,9 +106,15 @@ class PaperBroker:
         charges = leg_charges(req.side, req.qty, fill, intraday=req.product == "MIS").total
         wallet = get_wallet(db)
         gross = fill * req.qty
-        if req.side == "BUY":
+        if req.side == "BUY" and req.purpose == "EXIT" and req.entry_price:
+            # covering a short: release the margin blocked at entry plus the profit (or minus the loss)
+            entry_gross = req.entry_price * req.qty
+            wallet.cash += entry_gross + (entry_gross - gross) - charges
+        elif req.side == "BUY" or req.purpose == "ENTRY":
+            # a buy, or a short sale (100% of the value is blocked as margin, like the broker's intraday margin)
             if wallet.cash < gross + charges:
-                return OrderResult("REJECTED", message=f"insufficient paper cash ₹{wallet.cash:,.2f}")
+                return OrderResult("REJECTED", message=f"insufficient paper cash ₹{wallet.cash:,.2f} for ₹{gross + charges:,.2f}"
+                                   + (" (short margin)" if req.side == "SELL" else ""))
             wallet.cash -= gross + charges
         else:
             wallet.cash += gross - charges
@@ -131,7 +142,7 @@ class KiteBroker:
         kite = self.kite_client_fn()
         tag = "".join(ch for ch in req.idempotency_key if ch.isalnum())[:20]
         params = dict(
-            variety="regular", exchange="NSE", tradingsymbol=req.symbol, transaction_type=req.side,
+            variety=req.variety, exchange="NSE", tradingsymbol=req.symbol, transaction_type=req.side,
             quantity=req.qty, product=req.product, tag=tag, validity="DAY",
         )
         if req.order_type == "LIMIT":
@@ -145,7 +156,7 @@ class KiteBroker:
             try:
                 existing = [o for o in kite.orders() if o.get("tag") == tag]  # idempotency across retries
                 order_id = existing[0]["order_id"] if existing else kite.place_order(**params)
-                return self._await(kite, order_id, attempts)
+                return self._await(kite, order_id, attempts, polls=2 if req.variety == "amo" else 10)
             except (kex.InputException, kex.OrderException, kex.PermissionException, kex.TokenException) as e:
                 return OrderResult("REJECTED", message=f"{type(e).__name__}: {e}", attempts=attempts)
             except Exception as e:  # network / exchange glitches: retry with backoff
@@ -154,9 +165,9 @@ class KiteBroker:
                 self.sleep(min(8, 2 ** attempt))
         return OrderResult("FAILED", message=f"gave up after {attempts} attempts: {last_err}", attempts=attempts)
 
-    def _await(self, kite, order_id: str, attempts: int) -> OrderResult:
+    def _await(self, kite, order_id: str, attempts: int, polls: int = 10) -> OrderResult:
         status, last = "PLACED", {}
-        for _ in range(10):
+        for _ in range(polls):
             hist = kite.order_history(order_id)
             last = hist[-1] if hist else {}
             status = last.get("status", "")

@@ -14,6 +14,9 @@ import Logs from "./pages/Logs";
 import News from "./pages/News";
 import Orders from "./pages/Orders";
 import Portfolio from "./pages/Portfolio";
+import Screener from "./pages/Screener";
+import Compare from "./pages/Compare";
+import Stock from "./pages/Stock";
 import SettingsPage from "./pages/Settings";
 import Trades from "./pages/Trades";
 
@@ -50,6 +53,12 @@ export default function App() {
         <Route path="/trades" element={<Trades />} />
         <Route path="/orders" element={<Orders />} />
         <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/screener" element={<Screener />} />
+        <Route path="/screener/:id" element={<Screener />} />
+        <Route path="/compare" element={<Compare />} />
+        <Route path="/compare/:id" element={<Compare />} />
+        <Route path="/stock" element={<Stock />} />
+        <Route path="/stock/:symbol" element={<Stock />} />
         <Route path="/evals" element={<Evals />} />
         <Route path="/learning" element={<Learning />} />
         <Route path="/logs" element={<Logs />} />

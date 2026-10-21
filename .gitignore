@@ -14,3 +14,13 @@ frontend/node_modules/
 deploy/syena-local.conf
 windows/setup-log.txt
 windows/.db-ready
+windows/diag-log.txt
+windows/logs/
+windows/update-log.txt
+deploy/backups/
+
+# local copies / exports that must never be committed
+/syena/
+/syena-code.zip
+windows/*.sql.gz
+*.sql.gz

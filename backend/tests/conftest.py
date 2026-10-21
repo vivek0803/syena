@@ -153,13 +153,19 @@ class FakeLLM:
                        "counterfactual": {}, "proposed_lesson": None, "hindsight_flags": [], "summary": "bad entry"}
         self.judge = {"groundedness": 4, "consistency": 5, "no_hallucination": 4, "unsupported_claims": [], "comment": "ok"}
         self.parser = {"status": "clarify", "question": "?", "reason": "ambiguous"}
+        self.compare = {"top_pick": "INVENTED", "top_pick_reasons": ["ROE 20 with debt/equity 0.2"],
+                        "ranking": [{"symbol": "DEBTCO", "score": 55, "verdict": "neutral", "why": "D/E 2.5 is high"},
+                                    {"symbol": "GOODCO", "score": 140, "verdict": "strong", "why": "ROE 20, P/E 20"},
+                                    {"symbol": "FAKECO", "score": 99, "verdict": "strong", "why": "made up"}],
+                        "risks": ["valuation"], "data_gaps": [], "summary": "GOODCO is strongest."}
+        self.image_text = "Infosys (INFY) breakout. Buy above 1520, target 1600, stop 1480."
         self.prompts: list[str] = []
 
     def __call__(self, model, system, user):
         self.prompts.append(user)
         if system.startswith("You triage"):
             return _json.dumps(self.triage)
-        if system.startswith("You are a cautious equity analyst"):
+        if system.startswith("You are a disciplined equity analyst"):
             return "```json\n" + _json.dumps(self.analysis) + "\n```"
         if system.startswith("You are a post-trade reviewer"):
             return _json.dumps(self.review)
@@ -167,6 +173,10 @@ class FakeLLM:
             return _json.dumps(self.judge)
         if system.startswith("You convert"):
             return _json.dumps(self.parser)
+        if system.startswith("You read images"):
+            return self.image_text
+        if system.startswith("You compare a set of NSE"):
+            return _json.dumps(self.compare)
         if system.startswith("You review a proposed manual"):
             return _json.dumps({"verdict": "caution", "issues": [], "suggested": {}, "summary": "ok"})
         return _json.dumps({"text": "pattern"})
@@ -178,6 +188,22 @@ def fake_llm():
     _llm.set_backend(_llm.FakeBackend(f))
     yield f
     _llm.set_backend(None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_news_alias_cache():
+    from syena.news import mapping as _mapping
+
+    _mapping._cache.update(t=0.0, v=None)
+    yield
+    _mapping._cache.update(t=0.0, v=None)
+
+
+@pytest.fixture(autouse=True)
+def _no_network_sector_sync(monkeypatch):
+    from syena.screener import lists as _lists
+
+    monkeypatch.setattr(_lists, "_sync_sectors_in_background", lambda: None)
 
 
 @pytest.fixture(autouse=True)

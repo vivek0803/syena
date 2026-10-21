@@ -1,0 +1,29 @@
+# Swing high/low and Fibonacci retracement / extension levels (previous-n-bar range).
+- id: fib-01
+  text: "buy when close is between fib 50% and fib 61.8% of the last 50 candles"
+  entry: and(ge(close, fib(50,61.8)), le(close, fib(50,50)))
+- id: fib-02
+  text: "buy when close crosses above fib 61.8 of the last 100 bars and rsi < 40"
+  entry: and(cross_above(close, fib(100,61.8)), lt(rsi(14), 40))
+- id: fib-03
+  text: "buy when close crosses above the 20 day high"
+  entry: cross_above(close, hh(20))
+- id: fib-04
+  text: "buy when close > ema 200 and low < 38.2% fib retracement of the past 30 days"
+  entry: and(gt(close, ema(200)), lt(low, fib(30,38.2)))
+- id: fib-05
+  text: "buy when close crosses above fib(60, 78.6), sell when close reaches the 60-candle swing high"
+  entry: cross_above(close, fib(60,78.6))
+  exit: ge(close, hh(60))
+- id: fib-06
+  text: "buy when close < fib 50 of the last 40 candles, sell when close > fib extension 127.2 of the last 40 candles"
+  entry: lt(close, fib(40,50))
+  exit: gt(close, fibx(40,127.2))
+- id: fib-07
+  text: "buy when close crosses below the 10-bar low and stoch k < 20"
+  entry: and(cross_below(close, ll(10)), lt(stoch(14,3,3).k, 20))
+- id: fib-08
+  text: "buy when close is between fib 50% and 61.8% of the last 50 candles and stochastic %K crosses above %D, stop loss 1.5 atr, target 6%"
+  entry: and(ge(close, fib(50,61.8)), le(close, fib(50,50)), cross_above(stoch(14,3,3).k, stoch(14,3,3).d))
+  stop_loss: {type: atr, mult: 1.5}
+  target: {type: pct, value: 6}

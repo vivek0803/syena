@@ -7,8 +7,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from syena.db import get_db
-from syena.market import kite as kite_session
-from syena.market.data import KiteMarketData
+from syena.market import source as md_source
 
 
 def ser(obj, exclude: tuple = (), extra: dict | None = None) -> dict:
@@ -29,10 +28,8 @@ def ser(obj, exclude: tuple = (), extra: dict | None = None) -> dict:
     return out
 
 
-def market_data(db: Session = Depends(get_db)) -> KiteMarketData:
-    if kite_session.active_token(db) is None:
-        raise HTTPException(409, "Connect Zerodha first: market data comes from your Kite session.")
-    return KiteMarketData(db)
+def market_data(db: Session = Depends(get_db)):
+    return md_source.get_market_data(db)  # raises KiteNotConnected -> 409 with a clear message
 
 
 def bad_request(e: Exception, code: int = 400):

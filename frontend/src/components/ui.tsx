@@ -48,8 +48,17 @@ export function Pill({ tone = "mute", children }: { tone?: keyof typeof pillTone
   return <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[13px] font-medium ${pillTones[tone] ?? pillTones.mute}`}>{children}</span>;
 }
 
-export const decisionTone = (t?: string) =>
-  ({ PLACED: "gain", EXITED: "info", REJECTED: "loss", SKIPPED: "mute", HELD: "warn" } as Record<string, string>)[t ?? ""] ?? "mute";
+/** Simple outcome of a decision: buy, sell (short), rejected, error; plus exited / skipped / held for exits. */
+export const decisionLabel = (d?: { type?: string; side?: string | null; summary?: string } | null) => {
+  if (!d?.type) return "";
+  if (d.type === "PLACED") return `${d.side === "SELL" ? "sell" : "buy"}${d.summary?.startsWith("QUEUED") ? " · queued" : ""}`;
+  if (d.type === "HOLD" || d.type === "REJECTED") return "rejected";
+  if (d.type === "HELD") return "exit pending";
+  return d.type.toLowerCase();
+};
+export const decisionTone = (t?: string, side?: string | null) =>
+  t === "PLACED" ? (side === "SELL" ? "loss" : "gain")
+    : ({ EXITED: "info", REJECTED: "mute", HOLD: "mute", ERROR: "warn", SKIPPED: "mute", HELD: "warn" } as Record<string, string>)[t ?? ""] ?? "mute";
 
 export function Stat({ label, value, sub, valueClass = "" }: { label: string; value: ReactNode; sub?: ReactNode; valueClass?: string }) {
   return (

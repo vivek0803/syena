@@ -4,6 +4,7 @@ Each sync writes a new HoldingSnapshot so history is kept and staleness is visib
 """
 import io
 import logging
+import re
 from datetime import datetime, time, timedelta
 
 import httpx
@@ -24,6 +25,19 @@ ANGEL_BASE = "https://apiconnect.angelone.in"
 
 class SourceError(RuntimeError):
     pass
+
+
+_ETF_SYMBOL = re.compile(r"^SETF|(BEES|ETF|IETF|ETFS)(-[A-Z]{2})?$")
+
+
+def demat_class(isin: str | None, symbol: str | None, name: str | None = None) -> str:
+    """'etf' or 'equity' for a demat holding. Exchange-traded fund units carry INF... ISINs (shares are INE...)."""
+    if isin and isin.upper().startswith("INF"):
+        return "etf"
+    sym = (symbol or "").upper().replace("-EQ", "")
+    if _ETF_SYMBOL.search(sym) or " ETF" in f" {(name or '').upper()}":
+        return "etf"
+    return "equity"
 
 
 def _snapshot(db: Session, source: str, rows: list[dict], note: str | None = None) -> HoldingSnapshot:
@@ -53,19 +67,25 @@ def sync_zerodha(db: Session, kite=None) -> HoldingSnapshot:
         if qty <= 0:
             continue
         ltp = h.get("last_price") or h.get("close_price") or 0
-        rows.append({"asset_class": "equity", "symbol": h["tradingsymbol"], "isin": h.get("isin"), "name": h["tradingsymbol"],
+        rows.append({"asset_class": demat_class(h.get("isin"), h["tradingsymbol"]), "symbol": h["tradingsymbol"],
+                     "isin": h.get("isin"), "name": h["tradingsymbol"],
                      "qty": qty, "avg_price": h.get("average_price"), "ltp": ltp, "value": round(qty * ltp, 2)})
     try:
+        n_mf = 0
         for m in kite.mf_holdings():  # Zerodha Coin direct mutual funds
             units = m.get("quantity") or 0
             nav = m.get("last_price") or 0
             if units > 0:
+                n_mf += 1
                 rows.append({"asset_class": "mf", "symbol": m.get("tradingsymbol"), "isin": m.get("tradingsymbol"),
                              "name": m.get("fund") or m.get("tradingsymbol"), "qty": units, "avg_price": m.get("average_price"),
                              "ltp": nav, "value": round(units * nav, 2), "folio": m.get("folio")})
+        note = (f"{n_mf} Coin mutual funds" if n_mf else
+                "no mutual funds in Zerodha Coin (funds bought elsewhere come from your CAS statement)")
     except Exception as e:
-        log.info("kite mf holdings unavailable", extra={"error": str(e)})
-    return _snapshot(db, "zerodha", rows)
+        log.warning("kite mf holdings unavailable", extra={"error": str(e)})
+        note = f"Coin mutual funds could not be read ({e}); import your CAS statement for mutual funds"
+    return _snapshot(db, "zerodha", rows, note=note)
 
 
 # ---------------------------------------------------------------- Angel One (read-only)
@@ -124,9 +144,12 @@ def sync_angel(db: Session, http=httpx) -> HoldingSnapshot:
             continue
         ltp = float(h.get("ltp") or h.get("close") or 0)
         sym = (h.get("tradingsymbol") or "").replace("-EQ", "")
-        rows.append({"asset_class": "equity", "symbol": sym, "isin": h.get("isin"), "name": h.get("symbolname") or sym,
+        rows.append({"asset_class": demat_class(h.get("isin"), sym, h.get("symbolname")), "symbol": sym, "isin": h.get("isin"),
+                     "name": h.get("symbolname") or sym,
                      "qty": qty, "avg_price": float(h.get("averageprice") or 0), "ltp": ltp, "value": round(qty * ltp, 2)})
-    return _snapshot(db, "angel", rows)
+    # SmartAPI only exposes demat holdings (stocks/ETFs); Angel One mutual funds are not available through it
+    return _snapshot(db, "angel", rows, note="stocks and ETFs only: Angel One's API does not share mutual funds "
+                                              "(they come from your CAS statement)")
 
 
 # ---------------------------------------------------------------- CAMS / KFintech CAS
@@ -152,7 +175,8 @@ def import_cas(db: Session, pdf_bytes: bytes, password: str) -> HoldingSnapshot:
         for e in acct.get("equities") or []:
             qty = float(e.get("num_shares") or 0)
             if qty > 0:
-                rows.append({"asset_class": "equity", "symbol": None, "isin": e.get("isin"), "name": e.get("name") or e.get("isin"),
+                rows.append({"asset_class": demat_class(e.get("isin"), None, e.get("name")), "symbol": None, "isin": e.get("isin"),
+                             "name": e.get("name") or e.get("isin"),
                              "qty": qty, "avg_price": None, "ltp": float(e.get("price") or 0), "value": float(e.get("value") or 0)})
         for m in acct.get("mutual_funds") or []:
             units = float(m.get("balance") or 0)

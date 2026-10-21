@@ -51,6 +51,46 @@ def technicals(df: pd.DataFrame) -> dict:
     elif rsi < 25:
         score -= 1
         reasons.append(f"RSI {rsi:.0f} oversold (falling knife)")
+    # candlestick patterns on the last 5 daily candles and where price sits against its trendlines
+    from syena.algos import patterns as pat
+
+    candles = [f"{f['label']} ({f['direction']}, {f['ts'].date():%d %b})" for f in pat.found(df, last=5, chart_only=True)]
+    if candles:
+        reasons.append("candles: " + "; ".join(candles))
+    lines = {}
+    for kind in ("support", "resistance"):
+        v = pat.trendline(df.iloc[-120:], 60, kind).iloc[-1]
+        if v == v:
+            lines[kind] = round(float(v), 2)
+    if "resistance" in lines and last > lines["resistance"]:
+        reasons.append(f"above trendline resistance {lines['resistance']} (breakout)")
+    if "support" in lines and last < lines["support"]:
+        reasons.append(f"below trendline support {lines['support']} (breakdown)")
     return {"available": True, "close": round(last, 2), "sma50": None if sma50 != sma50 else round(float(sma50), 2),
             "sma200": None if sma200 != sma200 else round(float(sma200), 2), "rsi14": round(rsi, 2),
-            "macd_hist": round(hist, 4), "score": score, "bullish": score > 0, "bearish": score < 0, "reasons": reasons}
+            "macd_hist": round(hist, 4), "score": score, "bullish": score > 0, "bearish": score < 0, "reasons": reasons,
+            "candle_patterns": candles, "trendlines": lines}
+
+
+TF_LABELS = {"minute": "1-minute", "3minute": "3-minute", "5minute": "5-minute", "15minute": "15-minute",
+             "30minute": "30-minute", "60minute": "1-hour", "day": "daily"}
+
+
+def multi_timeframe(md, symbol: str, as_of, timeframes: list[str], days: int = 30) -> list[dict]:
+    """Candlestick patterns and trendline position over the last `days` on each timeframe (TradingView-style
+    multi-timeframe read). A timeframe whose candles can't be loaded is reported as unavailable, never fatal."""
+    from datetime import timedelta
+
+    from syena.algos import patterns as pat
+
+    out = []
+    for tf in timeframes:
+        try:
+            warm = 40 if tf == "day" else 3  # a little extra history for the trend checks before the window
+            df = md.candles(symbol, tf, as_of - timedelta(days=days + warm), as_of)
+            df = df[df.index <= as_of] if len(df) else df
+            s = pat.summary(df, since=as_of - timedelta(days=days))
+        except Exception as e:
+            s = {"available": False, "error": str(e)[:120]}
+        out.append({"timeframe": TF_LABELS.get(tf, tf), **s})
+    return out

@@ -1,10 +1,12 @@
 """Dashboard, decisions, trades/positions, orders, CSV exports, live event stream, Zerodha connection."""
+import logging
 import asyncio
 import csv
 import io
 import json
 from datetime import datetime, timedelta
 
+from syena.market import source as md_source
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
@@ -66,6 +68,7 @@ def dashboard(db: Session = Depends(get_db)):
         "recent_decisions": [ser(d, exclude=("reason_json", "inputs_json", "similar_trades")) for d in recent],
         "kite": kite_session.token_status(db),
         "angel": angel_status(db),
+        "prices": {"provider": md_source.provider(), "ready": md_source.ready(db)},
         "market_open": calendar.is_market_open(now, settings_store.get(db, "holidays")),
         "health": {
             "db": "ok",
@@ -85,8 +88,13 @@ def dashboard(db: Session = Depends(get_db)):
 def decisions(type: str | None = None, symbol: str | None = None, source: str | None = None, algo_id: int | None = None,
               mode: str | None = None, before_id: int | None = None, limit: int = 100, db: Session = Depends(get_db)):
     q = select(Decision)
-    if type:
-        q = q.where(Decision.type == DecisionType(type.upper()))
+    t = (type or "").upper()
+    if t in ("BUY", "SELL"):  # simple outcomes: a placed long (buy) or short (sell)
+        q = q.where(Decision.type == DecisionType.PLACED, Decision.side == t)
+    elif t == "REJECTED":  # includes older HOLD records
+        q = q.where(Decision.type.in_([DecisionType.REJECTED, DecisionType.HOLD]))
+    elif t:
+        q = q.where(Decision.type == DecisionType(t))
     if symbol:
         q = q.where(Decision.symbol == symbol.upper())
     if source:
@@ -284,6 +292,7 @@ def kite_callback(request_token: str | None = None, nonce: str | None = None, st
         return RedirectResponse("/?kite=cancelled", status_code=303)
     try:
         kite_session.complete_login(db, request_token)
-    except Exception:
+    except Exception as e:
+        logging.getLogger("syena.kite").error("Zerodha login failed: %s: %s", type(e).__name__, e)
         return RedirectResponse("/?kite=error", status_code=303)
     return RedirectResponse("/?kite=connected", status_code=303)

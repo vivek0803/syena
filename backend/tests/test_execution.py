@@ -80,10 +80,28 @@ def test_entry_placed_in_paper_with_fill_charges_and_wallet(db, user):
     assert {c["name"] for c in d.checks_json} >= {"sizing", "market_hours", "max_open_positions", "broker"}
 
 
-@pytest.mark.parametrize("now,check", [(T_HOLIDAY, "market_hours"), (T_NIGHT, "market_hours")])
-def test_closed_market_rejected(db, user, now, check):
+@pytest.mark.parametrize("now", [T_HOLIDAY, T_NIGHT])
+def test_closed_market_queued_for_any_style_rejected_only_when_queue_off(db, user, now):
+    from syena import settings_store
+
+    d = engine.enter(db, intent(style=Style.INTRADAY), paper_factory, now=now)
+    assert d.type == DecisionType.PLACED and d.summary.startswith("QUEUED")  # intraday is queued too now
+    settings_store.put(db, "amo", {**settings_store.get(db, "amo"), "enabled": False})
     d = engine.enter(db, intent(), paper_factory, now=now)
-    assert d.type == DecisionType.REJECTED and check in d.summary
+    assert d.type == DecisionType.REJECTED and "market_hours" in d.summary and "turned off" in d.summary
+
+
+@pytest.mark.parametrize("now", [T_HOLIDAY, T_NIGHT])
+def test_closed_market_swing_queued_in_syena(db, user, now):
+    from syena.models import Order
+
+    d = engine.enter(db, intent(), paper_factory, now=now)
+    assert d.type == DecisionType.PLACED and "QUEUED" in d.summary
+    t = db.get(Trade, d.trade_id)
+    o = db.scalar(select(Order).where(Order.trade_id == t.id))
+    assert t.status == TradeStatus.PENDING and o.variety == "queued" and o.broker_order_id is None
+    assert o.price == pytest.approx(1500)  # the signal price: the gap limit is checked against it at the open
+    assert get_wallet(db).cash == 100000  # no money moves until Syena places it at the open
 
 
 def test_intraday_cutoff(db, user):

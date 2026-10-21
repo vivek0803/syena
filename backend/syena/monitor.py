@@ -51,10 +51,10 @@ def check_price_levels(db: Session, prices: dict[str, float], now: datetime | No
             continue
         if t.style == Style.INTRADAY and not calendar.before(now, styles["intraday_square_off"]):
             out.append(_exit_or_alert(db, t, "square_off", f"intraday square-off at {styles['intraday_square_off']}", p, broker_factory))
-        elif t.stop_loss and p <= t.stop_loss:
-            out.append(_exit_or_alert(db, t, "stop_loss", f"LTP {p} ≤ stop {t.stop_loss}", p, broker_factory))
-        elif t.target and p >= t.target:
-            out.append(_exit_or_alert(db, t, "target", f"LTP {p} ≥ target {t.target}", p, broker_factory))
+        elif t.stop_loss and (p >= t.stop_loss if t.side == "SELL" else p <= t.stop_loss):  # shorts: stop is above
+            out.append(_exit_or_alert(db, t, "stop_loss", f"LTP {p} {'≥' if t.side == 'SELL' else '≤'} stop {t.stop_loss}", p, broker_factory))
+        elif t.target and (p <= t.target if t.side == "SELL" else p >= t.target):
+            out.append(_exit_or_alert(db, t, "target", f"LTP {p} {'≤' if t.side == 'SELL' else '≥'} target {t.target}", p, broker_factory))
     return out
 
 

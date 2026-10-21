@@ -1,5 +1,5 @@
 """News pipeline, trade gate, replay engine (no-lookahead), signal/triage metrics."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -12,7 +12,7 @@ from syena.evals import signal_eval, triage_eval
 from syena.execution.brokers import PaperBroker
 from syena.market.calendar import IST
 from syena.market.data import store_candles
-from syena.models import AICall, Decision, DecisionType, Event, NewsItem, NewsOutcome, Signal, Style, Trade, TradeStatus
+from syena.models import AICall, Decision, DecisionType, Event, NewsAnalysis, NewsItem, NewsOutcome, Order, Signal, Style, Trade, TradeStatus
 from syena.news import pipeline, sources
 from syena.news.context import market_context
 from tests.conftest import make_candles
@@ -62,7 +62,7 @@ def test_process_symbol_places_paper_trade_with_full_record(db, user, fake_llm, 
     item = NewsItem(source="t", url="u", title="Infosys wins $1.5 billion deal", published_at=now - timedelta(minutes=10), content_hash="h1")
     db.add(item)
     db.commit()
-    settings_store.put(db, "trade_gate", {"require_technical_agreement": False})
+    pass
     sig = pipeline.process_symbol(db, "INFY", [item], md, "order_win", pf, now=now)
     assert sig.action == "BUY" and sig.confidence == 82
     d = db.scalar(select(Decision).where(Decision.signal_id == sig.id))
@@ -72,7 +72,7 @@ def test_process_symbol_places_paper_trade_with_full_record(db, user, fake_llm, 
     if d.type == DecisionType.PLACED:
         t = db.get(Trade, d.trade_id)
         assert t.news_item_ids == [item.id] and t.stop_loss < t.entry_price < t.target and t.auto_sell
-    assert db.scalar(select(AICall)).prompt_version == "v1"
+    assert db.scalar(select(AICall)).prompt_version == "v4"
 
 
 def test_low_confidence_rejected_with_exact_check(db, user, fake_llm, md):
@@ -83,7 +83,7 @@ def test_low_confidence_rejected_with_exact_check(db, user, fake_llm, md):
     db.commit()
     sig = pipeline.process_symbol(db, "INFY", [item], md, None, pf, now=now)
     d = db.scalar(select(Decision).where(Decision.signal_id == sig.id))
-    assert d.type == DecisionType.REJECTED and "confidence 55" in d.summary
+    assert d.type == DecisionType.REJECTED and "news 55×80%" in d.summary and "weighted score" in d.summary
 
 
 def test_sell_signal_on_held_stock_raises_event_not_order(db, user, fake_llm, md):
@@ -144,3 +144,234 @@ def test_triage_eval_scores_false_negatives_separately():
              ({"relevant": True, "symbols": ["TCS"]}, {"relevant": True, "symbols": ["TCS"]})]
     m = triage_eval.score(cases)
     assert m["false_negatives_missed_material"] == 1 and m["false_positives_noise"] == 1 and m["relevance_recall"] == 0.5
+
+
+def test_run_cycle_retries_triaged_item_whose_analysis_failed(db, user, fake_llm, md):
+    from syena.models import NewsAnalysis
+
+    item = pipeline.ingest(db, [raw("Infosys wins large multi-year deal")])[0]
+    item.status = "TRIAGED"  # triage succeeded earlier, analysis failed (e.g. no price source then)
+    db.add(NewsAnalysis(news_item_id=item.id, stage="triage", relevant=True, symbols=["INFY"], event_type="order_win"))
+    db.commit()
+    stats = pipeline.run_cycle(db, md, fetch=lambda feeds: [], broker_factory=pf)
+    assert stats["retried"] == 1 and stats["signals"] == 1
+    db.refresh(item)
+    assert item.status == "ANALYSED"
+    assert db.scalar(select(Decision).where(Decision.symbol == "INFY")) is not None
+
+
+def test_run_cycle_gives_up_after_one_retry(db, user, fake_llm):
+    from syena.models import NewsAnalysis
+
+    class BrokenMD:
+        def candles(self, *a, **k):
+            raise RuntimeError("no prices")
+
+    item = pipeline.ingest(db, [raw("Infosys wins large multi-year deal")])[0]
+    item.status = "TRIAGED"
+    db.add(NewsAnalysis(news_item_id=item.id, stage="triage", relevant=True, symbols=["INFY"]))
+    db.commit()
+    stats = pipeline.run_cycle(db, BrokenMD(), fetch=lambda feeds: [])
+    db.refresh(item)
+    assert stats["errors"] == 1 and item.status == "FAILED"
+
+
+def test_hold_verdict_is_recorded_as_hold_and_funnel(authed, db, md, fake_llm, monkeypatch):
+    """Simple outcomes: a HOLD verdict is REJECTED with that reason, and the funnel counts it as rejected."""
+    from datetime import timedelta
+
+    from syena.models import Decision, DecisionType, NewsItem
+    from syena.news import pipeline
+
+    fake_llm.analysis = {**fake_llm.analysis, "action": "HOLD", "confidence": 40}
+    now = md.frames[("INFY", "day")].index[-1].to_pydatetime()
+    item = NewsItem(source="t", url="u", title="Infosys routine update", body="", published_at=now - timedelta(minutes=1),
+                    content_hash="h-hold", status="TRIAGED")
+    db.add(item)
+    db.commit()
+    md.as_of = now
+    pipeline.process_symbol(db, "INFY", [item], md, "other", now=now)
+    d = db.query(Decision).order_by(Decision.id.desc()).first()
+    assert d.type == DecisionType.REJECTED and d.summary.startswith("REJECTED: AI verdict HOLD")
+    assert d.checks_json[0]["name"] == "ai_verdict" and not d.checks_json[0]["passed"]
+    from syena.models import Signal
+
+    for row in [*db.query(Signal).all(), d]:  # the test clock is in the past: move records into the window
+        row.ts = utcnow()
+    item.fetched_at = utcnow()
+    db.commit()
+    f = authed.get("/api/news/funnel", params={"hours": 24}).json()
+    assert f["verdicts"].get("HOLD") == 1 and f["rejected"] == 1 and f["blocked_by"] == {"ai_verdict": 1}
+    assert [x["id"] for x in authed.get("/api/decisions", params={"type": "rejected"}).json()] == [d.id]
+
+
+def test_series_suffix_maps_to_plain_symbol(db):
+    from syena.models import Instrument
+    from syena.news import mapping
+
+    db.add_all([Instrument(instrument_token=1, tradingsymbol="GULFPETRO-BE", name="GP PETROLEUMS", exchange="NSE",
+                           instrument_type="EQ", updated_on=date.today()),
+                Instrument(instrument_token=2, tradingsymbol="SICKCO-BZ", name="SICK COMPANY", exchange="NSE",
+                           instrument_type="EQ", updated_on=date.today()),
+                Instrument(instrument_token=3, tradingsymbol="BAJAJ-AUTO", name="BAJAJ AUTO", exchange="NSE",
+                           instrument_type="EQ", updated_on=date.today())])
+    db.commit()
+    c = mapping.candidates(db, "GP Petroleums wins order; Sick Company update; Bajaj Auto sales")
+    assert "GULFPETRO" in c and "GULFPETRO-BE" not in c and "BAJAJ-AUTO" in c
+    assert not any(k.startswith("SICKCO") for k in c)
+
+
+def test_sell_verdict_opens_intraday_short_and_covers(db, user, fake_llm, md):
+    """SELL on a stock you don't hold: sell short intraday (MIS), stop above / target below, bought back on exit."""
+    from syena.execution.engine import exit_trade
+    from syena.execution.brokers import get_wallet
+
+    now = _news_now(md)
+    pass
+    fake_llm.analysis = {**fake_llm.analysis, "action": "SELL", "confidence": 95}
+    item = NewsItem(source="t", url="u", title="Infosys guidance cut sharply", published_at=now, content_hash="h-short")
+    db.add(item)
+    db.commit()
+    cash0 = get_wallet(db).cash
+    sig = pipeline.process_symbol(db, "INFY", [item], md, None, pf, now=now)
+    d = db.scalar(select(Decision).where(Decision.signal_id == sig.id))
+    assert d.type == DecisionType.PLACED, d.summary
+    t = db.get(Trade, d.trade_id)
+    assert t.side == "SELL" and t.style == Style.INTRADAY and t.target < t.entry_price < t.stop_loss
+    o = db.scalar(select(Order).where(Order.trade_id == t.id))
+    assert o.product == "MIS" and o.side == "SELL"
+    exit_trade(db, t, "target", round(t.entry_price * 0.98, 2), broker_factory=pf)
+    assert t.status == TradeStatus.CLOSED and t.profit_loss > 0  # price fell: the short made money
+    assert get_wallet(db).cash == pytest.approx(cash0 + t.profit_loss, abs=0.05)  # margin released + profit
+
+
+def test_short_selling_off_and_errors_are_rejected_with_reason(db, user, fake_llm, md):
+    from syena.models import Decision as D
+
+    now = _news_now(md)
+    settings_store.put(db, "news", {"short_selling": False})
+    fake_llm.analysis = {**fake_llm.analysis, "action": "SELL"}
+    item = NewsItem(source="t", url="u", title="Infosys probe", published_at=now, content_hash="h-off")
+    db.add(item)
+    db.commit()
+    sig = pipeline.process_symbol(db, "INFY", [item], md, None, pf, now=now)
+    d = db.scalar(select(D).where(D.signal_id == sig.id))
+    assert d.type == DecisionType.REJECTED and "short selling is off" in d.summary
+    pipeline.reject_error(db, "GHOST", [item], "analysis", ValueError("'GHOST' is not an NSE equity symbol."))
+    r = db.scalar(select(D).where(D.symbol == "GHOST"))
+    assert r.type == DecisionType.ERROR and r.summary.startswith("ERROR at analysis: no price data")
+    assert r.checks_json[0] == {**r.checks_json[0], "name": "analysis", "passed": False}
+
+
+def test_fair_queue_and_routine_filings_and_template_dedupe(db, user):
+    """A flood of NSE filings can't starve other sources; routine filings never reach the AI; template look-alike
+    Telegram tips about different stocks are not duplicates of each other."""
+    from syena.news import sources as S
+
+    now = utcnow()
+    raw = [S.RawItem("NSE announcements", f"u{i}", f"Company{i} Ltd - Outcome of Board Meeting", "", now - timedelta(minutes=1))
+           for i in range(30)]
+    raw += [S.RawItem("NSE announcements", "r1", "ABC Ltd - Closure of Trading Window", "", now),
+            S.RawItem("Moneycontrol latest", "m1", "Tata Motors shares jump after JLR sales beat", "", now - timedelta(minutes=2)),
+            S.RawItem("Telegram @x", "t1", "TATAMOTORS buy above 900 target 950 sl 880", "TATAMOTORS buy above 900 target 950 sl 880", now, key="tg:x/1"),
+            S.RawItem("Telegram @x", "t2", "HDFCBANK buy above 1600 target 1650 sl 1580", "HDFCBANK buy above 1600 target 1650 sl 1580", now, key="tg:x/2")]
+    items = pipeline.ingest(db, raw, now=now)
+    st = {i.url: i.status for i in items}
+    assert st["r1"] == "IRRELEVANT" and st["t1"] == st["t2"] == "NEW"  # not duplicates of each other
+    q = pipeline.fair_queue([i for i in items if i.status == "NEW"], 6)
+    assert {i.source for i in q} == {"NSE announcements", "Moneycontrol latest", "Telegram @x"}
+
+
+def test_nse_date_format_and_old_default_feeds_upgrade(db):
+    from syena.news import sources as S
+
+    d = S.parse_date({"published": "19-Oct-2026 20:45:12"})
+    assert d.isoformat() == "2026-10-19T15:15:12+00:00"  # IST -> UTC
+    settings_store.put(db, "news", {"feeds": [
+        {"name": "NSE announcements", "url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"},
+        {"name": "Moneycontrol markets", "url": "https://www.moneycontrol.com/rss/marketreports.xml"},
+        {"name": "Economic Times markets", "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"},
+        {"name": "Livemint markets", "url": "https://www.livemint.com/rss/markets"}]})
+    assert len(settings_store.get(db, "news")["feeds"]) == len(settings_store.DEFAULT_FEEDS) > 4
+    settings_store.put(db, "news", {"feeds": [{"name": "Mine", "url": "https://x.test/rss"}]})
+    assert settings_store.get(db, "news")["feeds"] == [{"name": "Mine", "url": "https://x.test/rss"}]  # your own list is kept
+
+
+def test_small_company_rejected_by_liquidity_and_reward_risk_recorded(db, user, fake_llm, md):
+    from datetime import date as _date
+
+    from syena.models import Stock, StockDaily
+
+    now = _news_now(md)
+    pass
+    db.add(Stock(symbol="INFY", active=True))
+    db.add(StockDaily(symbol="INFY", day=_date(2026, 10, 15), close=1500, market_cap_cr=300))
+    item = NewsItem(source="t", url="u", title="Infosys wins order", published_at=now, content_hash="h-liq")
+    db.add(item)
+    db.commit()
+    sig = pipeline.process_symbol(db, "INFY", [item], md, "order_win", pf, now=now)
+    d = db.scalar(select(Decision).where(Decision.signal_id == sig.id))
+    checks = {c["name"]: c for c in d.checks_json}
+    assert d.type == DecisionType.REJECTED and "liquidity" in d.summary and "market cap ₹300 cr" in checks["liquidity"]["detail"]
+    assert checks["reward_risk"]["passed"] and "reward" in checks["reward_risk"]["detail"]
+
+
+def test_weighted_score_80_15_5(db):
+    a = {"action": "BUY", "technicals": {"available": True, "score": 3}, "context": {"available": True, "score": 1.0}}
+    score, br = pipeline.weighted_score(db, a, 70)
+    assert br["parts"] == {"news": 70.0, "technicals": 100.0, "market": 100.0} and score == 76.0  # 56 + 15 + 5
+    short = {**a, "action": "SELL"}  # the same bullish technicals and market count against a short
+    assert pipeline.weighted_score(db, short, 70)[0] == 56.0
+    unknown = {"action": "BUY", "technicals": {"available": False}, "context": {"available": False}}
+    assert pipeline.weighted_score(db, unknown, 90)[0] == 82.0  # 72 + 7.5 + 2.5 (neutral 50s)
+    settings_store.put(db, "trade_gate", {"weights": {"news": 100, "technicals": 0, "market": 0}})
+    assert pipeline.weighted_score(db, a, 70)[0] == 70.0
+
+
+def test_filing_pdf_is_read_before_analysis(db, user, fake_llm, md, monkeypatch):
+    """NSE filings arrive as a headline only: the attached PDF's text is added before the AI analyses it."""
+    from syena.news import sources as S
+
+    now = _news_now(md)
+    item = NewsItem(source="NSE announcements", url="https://nsearchives.nseindia.com/corporate/INFY_123.pdf",
+                    title="Infosys Limited - Award of Order", body="", published_at=now, content_hash="h-pdf", status="TRIAGED")
+    db.add(item)
+    db.commit()
+    db.add(NewsAnalysis(news_item_id=item.id, stage="triage", relevant=True, symbols=["INFY"], event_type="order_win"))
+    db.commit()
+    monkeypatch.setattr(pipeline, "max_age", lambda db: timedelta(days=3650))
+    pipeline.run_cycle(db, md, fetch=lambda feeds: [], fetch_telegram=lambda c: [], broker_factory=pf, now=now,
+                       filing_get=lambda url: "Order value Rs 1,250 crore from a European bank over 5 years.")
+    db.refresh(item)
+    assert S.FILING_MARK in item.body and "1,250 crore" in item.body
+    assert "1,250 crore" in fake_llm.prompts[-1]  # the AI saw the figures
+
+
+def test_pdf_text_and_skip_sme_symbols(db):
+    from syena.models import Instrument, Stock
+    from syena.news import mapping, sources as S
+
+    assert mapping.base_symbol("AVANA-SM") is None and mapping.base_symbol("RICHA-ST") is None
+    db.add_all([Stock(symbol="INFY", active=True, name="Infosys Limited"),
+                Instrument(instrument_token=9, tradingsymbol="NOPRICE", name="NO PRICE INDUSTRIES", exchange="NSE",
+                           instrument_type="EQ", updated_on=date.today())])
+    db.commit()
+    c = mapping.candidates(db, "Infosys and No Price Industries sign a deal")
+    assert "INFY" in c and "NOPRICE" not in c  # only stocks Syena can price are proposed
+    class R:
+        def __init__(self, content, ctype):
+            self.content, self.headers, self.text = content, {"content-type": ctype}, content.decode("latin-1")
+        def raise_for_status(self):
+            pass
+    page = b'<html><a href="https://nsearchives.nseindia.com/corporate/X.pdf">Attachment</a></html>'
+    calls = []
+    def get(u):
+        calls.append(u)
+        return R(page, "text/html") if u.endswith(".html") else R(b"%PDF-1.4 not really", "application/pdf")
+    monkeypatch_pdf = S.pdf_text
+    S.pdf_text = lambda data, max_chars=6000: "Revenue Rs 500 crore"
+    try:
+        assert S.filing_text("https://www.nseindia.com/a.html", get=get) == "Revenue Rs 500 crore"
+        assert calls == ["https://www.nseindia.com/a.html", "https://nsearchives.nseindia.com/corporate/X.pdf"]
+    finally:
+        S.pdf_text = monkeypatch_pdf

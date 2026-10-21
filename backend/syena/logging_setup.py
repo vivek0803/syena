@@ -4,6 +4,7 @@ Usage: log = logging.getLogger("syena.mode"); log.info("msg", extra={"stock": "I
 """
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -99,6 +100,22 @@ def configure_logging(level: str = "INFO", to_db: bool = True, secrets: list[str
     stream.addFilter(secret_filter)
     stream._syena = True  # type: ignore[attr-defined]
     root.addHandler(stream)
+
+    log_dir = os.environ.get("SYENA_LOG_DIR")
+    if log_dir:  # laptop setup: also write logs to a folder you (and Claude) can open
+        try:
+            from logging.handlers import RotatingFileHandler
+
+            os.makedirs(log_dir, exist_ok=True)
+            name = "worker" if "worker" in (sys.argv[0] if sys.argv else "") else "api"
+            fh = RotatingFileHandler(os.path.join(log_dir, f"{name}.log"), maxBytes=2_000_000, backupCount=3,
+                                     encoding="utf-8")
+            fh.setFormatter(JsonFormatter())
+            fh.addFilter(secret_filter)
+            fh._syena = True  # type: ignore[attr-defined]
+            root.addHandler(fh)
+        except OSError:
+            pass
 
     if to_db:
         dbh = DBLogHandler(level=logging.INFO)

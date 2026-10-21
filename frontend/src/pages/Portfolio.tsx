@@ -60,7 +60,7 @@ export default function Portfolio() {
     );
   }
 
-  const classData = Object.entries(p.by_asset_class).map(([k, v]: any) => ({ name: k === "mf" ? "Mutual funds" : "Stocks", value: v.value }));
+  const classData = Object.entries(p.by_asset_class).map(([k, v]: any) => ({ name: k === "mf" ? "Mutual funds" : k === "etf" ? "ETFs" : "Stocks", value: v.value }));
   const sourceData = Object.entries(p.by_source).map(([k, v]: any) => ({ name: sourceName[k] ?? k, value: v.value }));
 
   return (
@@ -133,7 +133,7 @@ export default function Portfolio() {
           <Table rows={p.allocation} cols={[
             { key: "name", label: "Holding", className: "whitespace-normal min-w-[220px]", render: (r: any) => <><b>{r.symbol ?? r.name}</b>{r.symbol && r.asset_class === "mf" ? <div className="text-[13px] text-mute">{r.name}</div> : null}</> },
             { key: "source", label: "Account", render: (r: any) => sourceName[r.source] ?? r.source },
-            { key: "asset_class", label: "Type", render: (r: any) => (r.asset_class === "mf" ? "fund" : "stock") },
+            { key: "asset_class", label: "Type", render: (r: any) => (r.asset_class === "mf" ? "fund" : r.asset_class === "etf" ? "ETF" : "stock") },
             { key: "qty", label: "Qty / units", align: "right", render: (r: any) => Number(r.qty).toLocaleString("en-IN", { maximumFractionDigits: 3 }) },
             { key: "ltp", label: "Price / NAV", align: "right", render: (r: any) => money(r.ltp) },
             { key: "value", label: "Value", align: "right", render: (r: any) => money(r.value, false) },

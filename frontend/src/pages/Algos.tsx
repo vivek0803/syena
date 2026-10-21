@@ -1,18 +1,22 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Empty, ErrorNote, Field, Json, Loading, Modal, Page, Panel, Pill, Stat, Table, Trail, decisionTone, useToast } from "../components/ui";
+import { Empty, ErrorNote, Field, Json, Loading, Modal, Page, Panel, Pill, Stat, Table, Trail, decisionLabel, decisionTone, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { day, money, num, ratio, signed, tone, when } from "../lib/format";
 import { useAct, useApi } from "../lib/hooks";
+import StockPicker from "../components/StockPicker";
 
 const examples = [
   "buy when SMA 20 crosses above SMA 50",
   "ema(50) > ema(200)",
   "price closes below lower Bollinger band and RSI < 30",
   "MACD bullish crossover with volume above 20-day average",
+  "bullish engulfing and close > SMA 50, sell when bearish engulfing",
+  "close breaks above the trendline and volume above 20-day average",
+  "hammer and RSI 14 < 35, stop loss 2%, target 5%",
 ];
-const timeframes = ["5minute", "15minute", "30minute", "60minute", "day"];
+const timeframes = ["minute", "5minute", "15minute", "30minute", "60minute", "day"];
 
 export default function Algos() {
   const { id } = useParams();
@@ -21,14 +25,14 @@ export default function Algos() {
 
 function Builder() {
   const nav = useNavigate();
-  const [f, setF] = useState({ text: "", style: "SWING", run_mode: "PAPER", symbols: "INFY, TCS", timeframe: "day", name: "" });
+  const [f, setF] = useState({ text: "", style: "SWING", run_mode: "PAPER", symbols: ["INFY", "TCS"] as string[], timeframe: "day", name: "" });
   const [result, setResult] = useState<any>(null);
   const list = useApi<any[]>("/api/algos");
   const build = useAct((body: any) => api("/api/algos", { body }), ["/api/algos"]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    build.mutate({ ...f, symbols: f.symbols.split(/[,\s]+/).filter(Boolean), name: f.name || null }, { onSuccess: setResult });
+    build.mutate({ ...f, name: f.name || null }, { onSuccess: setResult });
   };
 
   return (
@@ -42,16 +46,19 @@ function Builder() {
           <div className="flex flex-wrap gap-2">
             {examples.map((x) => <button type="button" key={x} className="rounded-md bg-dusk px-2.5 py-1 text-sm text-parch-dim hover:text-parch" onClick={() => setF({ ...f, text: x })}>{x}</button>)}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Mode"><select className="input" value={f.run_mode} onChange={(e) => setF({ ...f, run_mode: e.target.value })}>
               <option value="BACKTEST">Backtest only</option><option value="PAPER">Paper</option><option value="LIVE">Live (after the gate)</option></select></Field>
             <Field label="Style"><select className="input" value={f.style} onChange={(e) => setF({ ...f, style: e.target.value })}>
-              <option value="INTRADAY">Intraday (MIS)</option><option value="SWING">Swing (CNC)</option></select></Field>
+              <option value="INTRADAY">Intraday (MIS)</option><option value="SWING">Swing (CNC)</option><option value="LONG_TERM">Long-term (CNC)</option></select></Field>
             <Field label="Candles"><select className="input" value={f.timeframe} onChange={(e) => setF({ ...f, timeframe: e.target.value })}>
-              {timeframes.map((t) => <option key={t} value={t}>{t === "day" ? "daily" : t.replace("minute", " min")}</option>)}</select></Field>
-            <Field label="Stocks (NSE symbols)"><input className="input" value={f.symbols} onChange={(e) => setF({ ...f, symbols: e.target.value.toUpperCase() })} /></Field>
+              {timeframes.map((t) => <option key={t} value={t}>{t === "day" ? "daily" : t === "minute" ? "1 min" : t.replace("minute", " min")}</option>)}</select></Field>
             <Field label="Name (optional)"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
           </div>
+          <Field label="Stocks" hint="Search by symbol or name, paste a list, or add a whole index, market-cap group, sector or one of your screens.">
+            <StockPicker value={f.symbols} onChange={(symbols) => setF({ ...f, symbols })} />
+            <SpeedNote n={f.symbols.length} timeframe={f.timeframe} />
+          </Field>
           <ErrorNote error={build.error} />
           <button className="btn-primary" disabled={build.isPending}>{build.isPending ? "Reading your rule…" : "Build"}</button>
         </form>
@@ -108,6 +115,9 @@ function Inspector({ id }: { id: number }) {
   const patch = useAct((b: any) => api(`/api/algos/${id}`, { method: "PATCH", body: b }), inv);
   const editRule = useAct((rule: any) => api(`/api/algos/${id}/rule`, { method: "PUT", body: rule }), inv);
   const disableLive = useAct(() => api(`/api/algos/${id}/disable-live`, { method: "POST" }), inv);
+  const del = useAct(() => api(`/api/algos/${id}`, { method: "DELETE" }), inv);
+  const navigate = useNavigate();
+  const [delOpen, setDelOpen] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
   const [ruleText, setRuleText] = useState<string | null>(null);
   const [days, setDays] = useState(365);
@@ -117,7 +127,7 @@ function Inspector({ id }: { id: number }) {
   const a = data.algo;
   const report = bt.data;
   const running = a.status === "RUNNING";
-  const err = runBt.error || start.error || stop.error || patch.error || editRule.error;
+  const err = runBt.error || start.error || stop.error || patch.error || editRule.error || del.error;
 
   return (
     <Page title={a.name} intro={<Link to="/algos" className="text-saffron hover:underline">All algos</Link>}
@@ -127,7 +137,19 @@ function Inspector({ id }: { id: number }) {
             Start ({a.live_enabled ? "live" : "paper"})</button>}
         {a.live_enabled ? <button className="btn-ghost" onClick={() => disableLive.mutate(undefined)}>Disable live</button>
           : a.run_mode === "LIVE" && <button className="btn-ghost" onClick={() => setLiveOpen(true)}>Enable live…</button>}
+        {a.status !== "DELETED" && <button className="btn-ghost text-loss" onClick={() => setDelOpen(true)}>Delete</button>}
       </>}>
+      {(
+        <Modal open={delOpen} title={`Delete “${a.name}”?`} onClose={() => setDelOpen(false)}>
+          <p className="text-parch-dim">The algo stops and disappears from your list. Its past signals and decisions stay in the Decision Log.
+            You can't delete it while it has open positions.</p>
+          <div className="mt-4 flex gap-2">
+            <button className="btn-danger" disabled={del.isPending} onClick={() => del.mutate(undefined, {
+              onSuccess: () => { toast.show("Algo deleted"); navigate("/algos"); }, onSettled: () => setDelOpen(false) })}>Delete</button>
+            <button className="btn-ghost" onClick={() => setDelOpen(false)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
       <ErrorNote error={err} />
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="Rule" aside={<Pill tone={running ? "gain" : "mute"}>{a.status.toLowerCase()}</Pill>}>
@@ -138,12 +160,11 @@ function Inspector({ id }: { id: number }) {
               <Field label="Mode"><select className="input" disabled={running} value={a.run_mode} onChange={(e) => patch.mutate({ run_mode: e.target.value })}>
                 <option value="BACKTEST">Backtest</option><option value="PAPER">Paper</option><option value="LIVE">Live</option></select></Field>
               <Field label="Style"><select className="input" disabled={running} value={a.style} onChange={(e) => patch.mutate({ style: e.target.value })}>
-                <option value="INTRADAY">Intraday</option><option value="SWING">Swing</option></select></Field>
+                <option value="INTRADAY">Intraday</option><option value="SWING">Swing</option><option value="LONG_TERM">Long-term</option></select></Field>
               <Field label="Candles"><select className="input" disabled={running} value={a.timeframe} onChange={(e) => patch.mutate({ timeframe: e.target.value })}>
                 {timeframes.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
-              <Field label="Stocks"><input className="input" disabled={running} defaultValue={(a.symbols ?? []).join(", ")}
-                onBlur={(e) => patch.mutate({ symbols: e.target.value.split(/[,\s]+/).filter(Boolean) })} /></Field>
             </div>
+            <AlgoStocks a={a} running={running} onSave={(symbols) => patch.mutate({ symbols })} saving={patch.isPending} />
             {a.kind === "rule" && a.parsed_rule && (ruleText === null ? (
               <button className="text-sm text-saffron hover:underline" disabled={running} onClick={() => setRuleText(JSON.stringify(a.parsed_rule, null, 2))}>Edit the rule JSON</button>
             ) : (
@@ -184,9 +205,10 @@ function Inspector({ id }: { id: number }) {
           <select className="input w-auto py-1.5" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period">
             {[90, 180, 365, 730, 1095].map((d) => <option key={d} value={d}>{d >= 365 ? `${d / 365} year${d > 365 ? "s" : ""}` : `${d} days`}</option>)}
           </select>
-          <button className="btn-primary py-1.5" disabled={runBt.isPending || running || !a.parsed_rule} onClick={() => runBt.mutate(days)}>{runBt.isPending ? "Running…" : report ? "Re-run" : "Run backtest"}</button>
+          <button className="btn-primary py-1.5" disabled={runBt.isPending || running || !a.parsed_rule} onClick={() => runBt.mutate(days)}>{runBt.isPending ? `Running on ${(a.symbols ?? []).length} stocks…` : report ? "Re-run" : "Run backtest"}</button>
         </div>}>
-          {!report ? <p className="text-parch-dim">Run a backtest on historical Zerodha candles. Fills happen at the next candle's open with slippage and full charges; the ₹ position-size band applies.</p> : <BacktestReport r={report} />}
+          {runBt.isPending && (a.symbols ?? []).length > 10 && <p className="mb-3 text-sm text-mute">Downloading price history for {(a.symbols ?? []).length} stocks: up to ~{Math.ceil((a.symbols ?? []).length / 1.4 / 10) * 10} seconds the first time (Angel's speed limit). Re-runs are quick because prices are saved.</p>}
+          {!report ? <p className="text-parch-dim">Run a backtest on historical candles. Fills happen at the next candle's open with slippage and full charges; the ₹ position-size band applies.</p> : <BacktestReport r={report} />}
         </Panel>
       )}
 
@@ -200,7 +222,7 @@ function Inspector({ id }: { id: number }) {
         <Table rows={data.decisions} rowKey={(r: any) => r.id} empty={<p className="p-1 text-parch-dim">No signals fired yet.</p>}
           cols={[
             { key: "ts", label: "When", render: (r: any) => when(r.ts) },
-            { key: "type", label: "Decision", render: (r: any) => <Link className="hover:underline" to={`/decisions/${r.id}`}><Pill tone={decisionTone(r.type)}>{r.type.toLowerCase()}</Pill></Link> },
+            { key: "type", label: "Decision", render: (r: any) => <Link className="hover:underline" to={`/decisions/${r.id}`}><Pill tone={decisionTone(r.type, r.side)}>{decisionLabel(r)}</Pill></Link> },
             { key: "symbol", label: "Stock" },
             { key: "mode", label: "Mode" },
             { key: "summary", label: "Summary", className: "whitespace-normal min-w-[260px] text-parch-dim" },
@@ -212,10 +234,43 @@ function Inspector({ id }: { id: number }) {
   );
 }
 
+/** Angel serves about 1.4 price-history downloads a second, so very long lists take a while to check. */
+function SpeedNote({ n, timeframe }: { n: number; timeframe: string }) {
+  if (n < 100) return null;
+  const secs = Math.ceil(n / 1.4);
+  const t = secs >= 90 ? `about ${Math.round(secs / 60)} min` : `about ${secs} s`;
+  const intraday = timeframe !== "day";
+  return (
+    <p className={`mt-2 text-[13px] ${intraday && secs > 300 ? "text-saffron" : "text-mute"}`}>
+      {n} stocks: the first backtest downloads each one's history ({t}); re-runs are quick.
+      {intraday ? ` While running, every ${timeframe.replace("minute", "-minute")} check refreshes all ${n} stocks (${t})${secs > 300 ? ", which is longer than one candle: use daily candles or fewer stocks." : "."}` : " With daily candles each stock is refreshed once a day."}
+    </p>
+  );
+}
+
+function AlgoStocks({ a, running, onSave, saving }: { a: any; running: boolean; onSave: (s: string[]) => void; saving: boolean }) {
+  const [syms, setSyms] = useState<string[]>(a.symbols ?? []);
+  useEffect(() => setSyms(a.symbols ?? []), [a.id, (a.symbols ?? []).join(",")]);
+  const dirty = syms.join(",") !== (a.symbols ?? []).join(",");
+  return (
+    <Field label="Stocks" hint={running ? "Stop the algo to change its stocks." : a.screen_linked ? "This algo's stocks follow a screen: they're replaced after each daily run." : undefined}>
+      <StockPicker value={syms} onChange={setSyms} disabled={running} />
+      <SpeedNote n={syms.length} timeframe={a.timeframe} />
+      {dirty && !running && <div className="mt-2 flex gap-2">
+        <button type="button" className="btn-primary" disabled={saving || !syms.length} onClick={() => onSave(syms)}>Save stocks</button>
+        <button type="button" className="btn-ghost" onClick={() => setSyms(a.symbols ?? [])}>Undo</button>
+        <span className="self-center text-[13px] text-mute">Changing stocks needs a new backtest.</span>
+      </div>}
+    </Field>
+  );
+}
+
 function BacktestReport({ r }: { r: any }) {
   const m = r.metrics;
   return (
     <div className="space-y-5">
+      {r.failed_symbols?.length > 0 && <p className="rounded-lg border border-dusk-line p-3 text-sm text-parch-dim">Skipped {r.failed_symbols.length} stock{r.failed_symbols.length > 1 ? "s" : ""} (no price history could be loaded): {r.failed_symbols.slice(0, 15).map((f: any) => f.symbol).join(", ")}{r.failed_symbols.length > 15 ? " …" : ""}. <span className="text-mute">{r.failed_symbols[0].reason}</span></p>}
+      {r.note && <p className="rounded-lg border border-dusk-line bg-saffron-soft p-3 text-sm text-parch-dim">⚠ {r.note}</p>}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7">
         <Stat label="Trades" value={m.trades} />
         <Stat label="Win rate" value={ratio(m.win_rate)} />
@@ -238,7 +293,7 @@ function BacktestReport({ r }: { r: any }) {
           </ResponsiveContainer>
         </div>
       )}
-      <p className="text-sm text-mute">{r.config?.symbols?.join(", ")} · {r.config?.timeframe} candles · {day(r.config?.start)} to {day(r.config?.end)}{r.skipped?.length ? ` · ${r.skipped.length} signals skipped (sizing/cutoff)` : ""}</p>
+      <p className="text-sm text-mute">{(r.config?.symbols ?? []).length > 12 ? `${r.config.symbols.length} stocks` : r.config?.symbols?.join(", ")} · {r.config?.timeframe} candles · {day(r.config?.start)} to {day(r.config?.end)}{r.skipped?.length ? ` · ${r.skipped.length} signals skipped (sizing/cutoff)` : ""}</p>
       <details>
         <summary className="cursor-pointer text-saffron">Trade list ({r.trades.length})</summary>
         <Table rows={r.trades} cols={[

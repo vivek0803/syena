@@ -21,7 +21,9 @@ CMP = {"gt": ">", "ge": ">=", "lt": "<", "le": "<="}
 PRICE = {"open", "high", "low", "close", "volume"}
 IND = {"sma": ("sma", ["n"]), "ema": ("ema", ["n"]), "wma": ("wma", ["n"]), "rsi": ("rsi", ["n"]), "atr": ("atr", ["n"]),
        "adx": ("adx", ["n"]), "macd": ("macd", ["fast", "slow", "signal"]), "bb": ("bbands", ["n", "std"]),
-       "stoch": ("stoch", ["k", "d", "smooth"]), "st": ("supertrend", ["n", "mult"]), "vol_sma": ("volume_sma", ["n"])}
+       "stoch": ("stoch", ["k", "d", "smooth"]), "st": ("supertrend", ["n", "mult"]), "vol_sma": ("volume_sma", ["n"]),
+       "hh": ("highest", ["n"]), "ll": ("lowest", ["n"]), "fib": ("fib", ["n", "level"]), "fibx": ("fib_ext", ["n", "level"]),
+       "tls": ("trendline_support", ["n"]), "tlr": ("trendline_resistance", ["n"])}
 
 
 def _operand(n: ast.AST) -> dict:
@@ -57,6 +59,8 @@ def _node(n: ast.AST) -> dict:
         return {"op": f.rstrip("_"), "args": [_node(a) for a in n.args]}
     if f in ("not_", "neg"):
         return {"op": "not", "arg": _node(n.args[0])}
+    if f == "pattern":  # pattern(bullish_engulfing)
+        return {"op": "pattern", "name": n.args[0].id}
     raise ValueError(f"bad DSL node {f}")
 
 

@@ -4,6 +4,7 @@ from typing import Any
 import pandas as pd
 
 from syena.algos import indicators as ind
+from syena.algos import patterns as pat
 
 # name -> (param defaults in canonical order, outputs or None for single series, warmup multiplier key)
 INDICATORS: dict[str, dict[str, Any]] = {
@@ -19,7 +20,15 @@ INDICATORS: dict[str, dict[str, Any]] = {
     "adx": {"params": {"n": 14}, "outputs": None},
     "supertrend": {"params": {"n": 10, "mult": 3.0}, "outputs": ["line", "direction"]},
     "volume_sma": {"params": {"n": 20}, "outputs": None},
+    "highest": {"params": {"n": None}, "outputs": None},  # swing high of the previous n bars
+    "lowest": {"params": {"n": None}, "outputs": None},  # swing low of the previous n bars
+    "fib": {"params": {"n": 50, "level": None}, "outputs": None},  # retracement, level 0-100 (%)
+    "fib_ext": {"params": {"n": 50, "level": None}, "outputs": None},  # extension above the high, level > 100 (%)
+    "trendline_support": {"params": {"n": 50}, "outputs": None},  # line through the last 2 swing lows, extended
+    "trendline_resistance": {"params": {"n": 50}, "outputs": None},  # line through the last 2 swing highs, extended
 }
+FLOAT_PARAMS = {"std", "mult", "level"}
+LOOKBACK_PARAMS = {"n", "k", "d", "smooth", "fast", "slow", "signal"}
 PRICE_FIELDS = {"open", "high", "low", "close", "volume"}
 CMPS = {">", ">=", "<", "<="}
 BOOL_OPS = {"and", "or"}
@@ -65,7 +74,11 @@ def canon_operand(o: dict) -> dict:
             v = _num(v, f"{name}.{p}")
             if v <= 0 or v > 1000:
                 raise RuleError(f"{name}.{p}={v} out of range")
-            params[p] = int(v) if p not in ("std", "mult") else float(v)
+            params[p] = int(v) if p not in FLOAT_PARAMS else float(v)
+        if name == "fib" and not 0 < params["level"] <= 100:
+            raise RuleError("Fibonacci retracement level must be between 0 and 100 (use fib_ext for 127.2, 161.8 ...)")
+        if name == "fib_ext" and not 100 < params["level"] <= 500:
+            raise RuleError("Fibonacci extension level must be above 100 (e.g. 127.2, 161.8)")
         out = o.get("output")
         if spec["outputs"]:
             out = out or spec["outputs"][0]
@@ -100,6 +113,11 @@ def canon_node(n: dict) -> dict:
         return {"op": op, "args": flat}
     if op == "not":
         return {"op": "not", "arg": canon_node(n["arg"])}
+    if op == "pattern":  # a candlestick pattern completes on this bar
+        name = n.get("name")
+        if name not in pat.PATTERNS:
+            raise RuleError(f"unknown candlestick pattern {name!r}. Supported: " + ", ".join(pat.PATTERNS))
+        return {"op": "pattern", "name": name}
     raise RuleError(f"unknown op {op!r}")
 
 
@@ -179,6 +197,18 @@ def operand_series(df: pd.DataFrame, o: dict, cache: dict | None = None) -> pd.S
             s = ind.supertrend(df, p["n"], p["mult"])[out]
         elif name == "volume_sma":
             s = ind.volume_sma(df, p["n"])
+        elif name == "highest":
+            s = ind.highest(df, p["n"])
+        elif name == "lowest":
+            s = ind.lowest(df, p["n"])
+        elif name == "fib":
+            s = ind.fib(df, p["n"], p["level"])
+        elif name == "fib_ext":
+            s = ind.fib_ext(df, p["n"], p["level"])
+        elif name == "trendline_support":
+            s = pat.trendline(df, p["n"], "support")
+        elif name == "trendline_resistance":
+            s = pat.trendline(df, p["n"], "resistance")
         else:
             raise RuleError(name)
     cache[key] = s
@@ -213,10 +243,17 @@ def evaluate(df: pd.DataFrame, node: dict, cache: dict | None = None) -> pd.Seri
         return out
     if op == "not":
         return ~evaluate(df, node["arg"], cache)
+    if op == "pattern":
+        key = f"pattern:{node['name']}"
+        if key not in cache:
+            cache[key] = pat.detect(df, node["name"])
+        return cache[key]
     raise RuleError(op)
 
 
 def operands(node: dict) -> list[dict]:
+    if node["op"] == "pattern":
+        return []
     if node["op"] in ("compare", *CROSS_OPS):
         return [node["left"], node["right"]]
     if node["op"] in BOOL_OPS:
@@ -231,7 +268,7 @@ def warmup_bars(rule: dict) -> int:
             continue
         for o in operands(node):
             if o["kind"] == "indicator":
-                longest = max(longest, *[int(v) for v in o["params"].values()] or [1])
+                longest = max(longest, *[int(v) for k, v in o["params"].items() if k in LOOKBACK_PARAMS] or [1])
     return longest * 3 + 10
 
 
@@ -276,6 +313,18 @@ def describe_operand(o: dict) -> str:
         return f"{p['n']}-bar average volume"
     if name == "vwap":
         return "VWAP"
+    if name == "highest":
+        return f"{p['n']}-bar swing high"
+    if name == "lowest":
+        return f"{p['n']}-bar swing low"
+    if name == "fib":
+        return f"Fib {p['level']:g}% ({p['n']}-bar range)"
+    if name == "fib_ext":
+        return f"Fib extension {p['level']:g}% ({p['n']}-bar range)"
+    if name == "trendline_support":
+        return f"Trendline support ({p['n']} bars)"
+    if name == "trendline_resistance":
+        return f"Trendline resistance ({p['n']} bars)"
     return f"{name.upper()}({', '.join(str(v) for v in p.values())})"
 
 
@@ -291,6 +340,9 @@ def describe(node: dict | None) -> str:
         return f"{describe_operand(node['left'])} crosses below {describe_operand(node['right'])}"
     if op in BOOL_OPS:
         return "(" + f" {op.upper()} ".join(describe(a) for a in node["args"]) + ")"
+    if op == "pattern":
+        label = pat.PATTERNS[node["name"]][0]
+        return label if node["name"].startswith("any_") else f"{label} candle pattern"
     return f"NOT {describe(node['arg'])}"
 
 

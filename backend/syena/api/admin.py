@@ -12,7 +12,6 @@ from syena.api.deps import authenticated
 from syena.db import get_db, utcnow
 from syena.execution.brokers import reset_wallet
 from syena.market.calendar import to_ist
-from syena.market.data import KiteMarketData
 from syena.market import kite as kite_session
 from syena.models import AICall, Trade, TradeStatus
 from syena.monitor import approve_sell, reject_sell, status_text

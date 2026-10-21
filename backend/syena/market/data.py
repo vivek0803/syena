@@ -108,26 +108,47 @@ class KiteMarketData:
         return kite_session.client(self.db)
 
     def sync_instruments(self) -> int:
+        from sqlalchemy import delete, insert
+
         rows = self._kite().instruments("NSE")
         today = date.today()
-        n = 0
-        for r in rows:
-            if r.get("segment") != "NSE" or r.get("instrument_type") != "EQ":
-                continue
-            self.db.merge(Instrument(
-                instrument_token=r["instrument_token"], tradingsymbol=r["tradingsymbol"], name=r.get("name"),
-                exchange="NSE", segment=r.get("segment"), instrument_type=r.get("instrument_type"),
-                tick_size=r.get("tick_size") or 0.05, lot_size=r.get("lot_size") or 1, updated_on=today))
-            n += 1
+        recs = [dict(instrument_token=r["instrument_token"], tradingsymbol=r["tradingsymbol"], name=r.get("name"),
+                     exchange="NSE", segment=r.get("segment"), instrument_type=r.get("instrument_type"),
+                     tick_size=r.get("tick_size") or 0.05, lot_size=r.get("lot_size") or 1, updated_on=today)
+                for r in rows if r.get("segment") == "NSE" and r.get("instrument_type") == "EQ"]
+        if recs:  # replace the NSE list in one go (bulk insert is far faster than row-by-row merge)
+            self.db.execute(delete(Instrument).where(Instrument.exchange == "NSE"))
+            self.db.execute(insert(Instrument), recs)
         self.db.commit()
-        log.info("instruments synced", extra={"count": n})
-        return n
+        log.info("instruments synced", extra={"count": len(recs)})
+        return len(recs)
+
+    def _token(self, symbol: str) -> int:
+        try:
+            return instrument_token(self.db, symbol)
+        except KeyError:
+            self.sync_instruments()  # first use after connecting, or a newly listed stock
+            try:
+                return instrument_token(self.db, symbol)
+            except KeyError:
+                raise ValueError(f"'{symbol}' is not an NSE equity symbol. Use the trading symbol, e.g. RELIANCE, TCS, INFY.") from None
 
     def ltp(self, symbols: list[str]) -> dict[str, float]:
         if not symbols:
             return {}
         data = self._kite().ltp([f"NSE:{s}" for s in symbols])
         return {k.split(":", 1)[1]: float(v["last_price"]) for k, v in data.items()}
+
+    def daily_quotes(self, symbols: list[str]) -> dict[str, dict]:
+        out, kite = {}, self._kite()
+        for i in range(0, len(symbols), 250):
+            q = kite.quote([f"NSE:{s}" for s in symbols[i:i + 250]])
+            for k, v in q.items():
+                o = v.get("ohlc") or {}
+                out[k.split(":", 1)[1]] = {"open": o.get("open"), "high": o.get("high"), "low": o.get("low"),
+                                           "close": v.get("last_price"), "prev_close": o.get("close"),
+                                           "volume": v.get("volume"), "w52_high": None, "w52_low": None}
+        return out
 
     def index_snapshot(self) -> dict[str, dict]:
         q = self._kite().quote(list(INDEX_KEYS.values()))
@@ -154,7 +175,7 @@ class KiteMarketData:
             if end - last > timedelta(days=1) or (end > utcnow() - timedelta(days=1) and interval != "day"):
                 need.append((last, end))
         if need:
-            token = instrument_token(self.db, symbol)
+            token = self._token(symbol)
             kite = self._kite()
             for a, b in need:
                 cur = a

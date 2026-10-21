@@ -43,7 +43,8 @@ class NewsItem(Base):
     fetched_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     content_hash: Mapped[str] = mapped_column(String(64), unique=True)
     dup_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="NEW")  # NEW|DUPLICATE|TRIAGED|ANALYSED|IRRELEVANT|ERROR
+    status: Mapped[str] = mapped_column(String(16), default="NEW")  # NEW|DUPLICATE|STALE|TRIAGED|ANALYSED|IRRELEVANT|ERROR|FAILED
+    image_urls: Mapped[list | None] = mapped_column(JSON, nullable=True)  # photos in Telegram posts
 
 
 class NewsAnalysis(Base):
@@ -229,7 +230,7 @@ class Holding(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     snapshot_id: Mapped[int] = mapped_column(ForeignKey("holding_snapshots.id", ondelete="CASCADE"), index=True)
     source: Mapped[str] = mapped_column(String(16))
-    asset_class: Mapped[str] = mapped_column(String(16))  # equity | mf
+    asset_class: Mapped[str] = mapped_column(String(16))  # equity | etf | mf
     symbol: Mapped[str | None] = mapped_column(String(64), nullable=True)
     isin: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
