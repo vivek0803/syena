@@ -66,10 +66,23 @@ def technicals(df: pd.DataFrame) -> dict:
         reasons.append(f"above trendline resistance {lines['resistance']} (breakout)")
     if "support" in lines and last < lines["support"]:
         reasons.append(f"below trendline support {lines['support']} (breakdown)")
+    # horizontal support/resistance zones and market structure (HH/HL vs LH/LL)
+    from syena.algos import levels as lv
+
+    try:
+        zone_pts, zone_why = lv.score_for_trade(df, "BUY")
+        lvl = lv.analyse(df)
+        zones = {"supports": lvl["supports"][:2], "resistances": lvl["resistances"][:2],
+                 "trend": (lvl.get("structure") or {}).get("trend"), "reading": lvl["reading"]}
+    except Exception as e:  # never let a chart-reading problem block the news decision
+        zone_pts, zone_why, zones = 0.0, [], {"error": str(e)[:120]}
+    if zones.get("reading"):
+        reasons.append("support/resistance: " + zones["reading"])
     return {"available": True, "close": round(last, 2), "sma50": None if sma50 != sma50 else round(float(sma50), 2),
             "sma200": None if sma200 != sma200 else round(float(sma200), 2), "rsi14": round(rsi, 2),
             "macd_hist": round(hist, 4), "score": score, "bullish": score > 0, "bearish": score < 0, "reasons": reasons,
-            "candle_patterns": candles, "trendlines": lines}
+            "candle_patterns": candles, "trendlines": lines, "zones": zones, "zone_points": round(zone_pts, 2),
+            "zone_reasons": zone_why}
 
 
 TF_LABELS = {"minute": "1-minute", "3minute": "3-minute", "5minute": "5-minute", "15minute": "15-minute",

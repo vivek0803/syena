@@ -5,7 +5,7 @@ import StockLink from "./StockLink";
 
 export type Verdict = {
   symbol?: string; action?: string; confidence?: number | null; summary?: string | null; reasoning?: string | null;
-  risks?: string[]; sentiment?: number | null; model?: string | null; prompt_version?: string | null; ts?: string;
+  risks?: string[]; sentiment?: number | null; event?: string | null; materiality?: string | null; materiality_basis?: string | null; model?: string | null; prompt_version?: string | null; ts?: string;
   technicals?: { score?: number | null; reasons?: string[] | null } | null;
   decision?: { id: number; type: string; summary: string; failed?: { name: string; detail?: string } | null } | null;
   news?: { id: number; title: string; url?: string; source?: string } | null;
@@ -40,6 +40,12 @@ export default function AiVerdict({ a, threshold, compact = false }: { a: Verdic
           {a.ts && <span className="ml-auto text-[12px] text-mute">{when(a.ts)}</span>}
         </header>
 
+        {a.event && a.event !== "other" && (
+          <p className="flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="rounded-md border border-dusk-line px-2 py-0.5 text-parch-dim">{a.event.replace(/_/g, " ")}</span>
+            {a.materiality && <span className={a.materiality === "high" ? "text-parch" : "text-mute"}>{a.materiality} impact</span>}
+            {a.materiality_basis && <span className="text-mute">· {a.materiality_basis}</span>}
+          </p>)}
         {a.summary && <p className="text-[15px] leading-relaxed text-parch">{a.summary}</p>}
 
         {a.reasoning && (open ? <p className="text-sm leading-relaxed text-parch-dim">{a.reasoning}</p> : (

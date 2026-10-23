@@ -63,6 +63,80 @@ def _frame(rows) -> pd.DataFrame:
     return df.drop_duplicates("ts").set_index("ts").sort_index()
 
 
+# How often the newest candles are downloaded again (the last candle is still forming while the market is open).
+TAIL_REFRESH = {"day": 300.0}  # seconds; intraday intervals: 60
+_tail_seen: dict[tuple[str, str], float] = {}
+_tail_lock = threading.Lock()
+
+
+def missing_ranges(cached: pd.DataFrame, symbol: str, interval: str, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Which stretches to download. Besides gaps at either end, the newest few candles are fetched again (at most
+    once a minute; daily candles every 5 minutes) when the request reaches today, because a candle saved while it
+    was still forming has the wrong high/low/close. Saving overwrites, so the re-download corrects it."""
+    if cached.empty:
+        return [(start, end)]
+    need = []
+    first, last = cached.index[0].to_pydatetime(), cached.index[-1].to_pydatetime()
+    if first - start > timedelta(days=4):  # allow weekends/holidays at the edges
+        need.append((start, first))
+    recent = end > utcnow() - timedelta(days=1)
+    if recent:
+        key = (symbol, interval)
+        with _tail_lock:
+            due = time.monotonic() - _tail_seen.get(key, -1e9) >= TAIL_REFRESH.get(interval, 60.0)
+            if due:
+                _tail_seen[key] = time.monotonic()
+        if due or end - last > timedelta(days=1):
+            back = timedelta(days=4) if interval == "day" else timedelta(hours=1)
+            need.append((max(start, last - back), end))
+    elif end - last > timedelta(days=1):
+        need.append((last, end))
+    return need
+
+
+# Exchange price bands stop an NSE share moving more than 20% in a day, so an overnight jump far beyond that is a
+# split, bonus or consolidation, not trading. Snapped to the usual ratios: price after = price before x factor.
+CA_FACTORS = {1 / 2: "split 1:2 or bonus 1:1", 1 / 3: "bonus 2:1 or split 1:3", 2 / 3: "bonus 1:2", 3 / 4: "bonus 1:3",
+              1 / 4: "split 1:4", 1 / 5: "split 1:5", 1 / 10: "split 1:10", 1 / 20: "split 1:20", 2.0: "consolidation 2:1",
+              5.0: "consolidation 5:1", 10.0: "consolidation 10:1"}
+
+
+def adjust_corporate_actions(df: pd.DataFrame) -> pd.DataFrame:
+    """Back-adjust candles before a split/bonus so the chart, patterns and backtests see one continuous price.
+    Prices before the ex-date are multiplied by the factor and volumes divided by it, the way TradingView and
+    NSE's own charts show history. Found actions are listed in df.attrs["corporate_actions"]."""
+    if df is None or len(df) < 2:
+        return df
+    idx = df.index.tz_convert("Asia/Kolkata") if df.index.tz is not None else df.index
+    dates = pd.Series(idx.date, index=df.index)
+    first_of_day = (dates != dates.shift(1)).to_numpy()
+    o, c = df["open"].to_numpy(float), df["close"].to_numpy(float)
+    acts = []
+    for i in range(1, len(df)):
+        if not first_of_day[i] or c[i - 1] <= 0:
+            continue
+        r = o[i] / c[i - 1]
+        if 0.76 <= r <= 1.32:
+            continue
+        f = min(CA_FACTORS, key=lambda k: abs(r / k - 1))
+        if abs(r / f - 1) <= 0.12:
+            acts.append((i, f, CA_FACTORS[f]))
+        else:
+            acts.append((i, None, f"unexplained jump of {100 * (r - 1):+.0f}% (demerger or bad data?)"))
+    if not acts:
+        return df
+    out = df.copy()
+    for i, f, _ in acts:
+        if f is None:
+            continue
+        before = out.index[:i]
+        out.loc[before, ["open", "high", "low", "close"]] *= f
+        out.loc[before, "volume"] /= f
+    out.attrs["corporate_actions"] = [{"date": str(dates.iloc[i]), "factor": f, "label": lbl, "adjusted": f is not None}
+                                      for i, f, lbl in acts]
+    return out
+
+
 def cached_candles(db: Session, symbol: str, interval: str, start: datetime, end: datetime) -> pd.DataFrame:
     rows = db.execute(
         select(Candle.ts, Candle.open, Candle.high, Candle.low, Candle.close, Candle.volume)
@@ -84,9 +158,12 @@ def store_candles(db: Session, symbol: str, interval: str, df: pd.DataFrame) -> 
     if dialect == "postgresql":
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        stmt = pg_insert(Candle).values(records).on_conflict_do_nothing(constraint="uq_candle")
+        ins = pg_insert(Candle).values(records)
+        stmt = ins.on_conflict_do_update(constraint="uq_candle", set_={k: ins.excluded[k] for k in ("open", "high", "low", "close", "volume")})
     else:
-        stmt = sqlite_insert(Candle).values(records).on_conflict_do_nothing()
+        ins = sqlite_insert(Candle).values(records)
+        stmt = ins.on_conflict_do_update(index_elements=["symbol", "interval", "ts"],
+                                         set_={k: ins.excluded[k] for k in ("open", "high", "low", "close", "volume")})
     db.execute(stmt)
     db.commit()
     return len(records)
@@ -165,15 +242,7 @@ class KiteMarketData:
         if interval not in MAX_DAYS:
             raise ValueError(f"unsupported interval {interval}")
         cached = cached_candles(self.db, symbol, interval, start, end)
-        need: list[tuple[datetime, datetime]] = []
-        if cached.empty:
-            need.append((start, end))
-        else:
-            first, last = cached.index[0].to_pydatetime(), cached.index[-1].to_pydatetime()
-            if first - start > timedelta(days=4):  # allow weekends/holidays at the edges
-                need.append((start, first))
-            if end - last > timedelta(days=1) or (end > utcnow() - timedelta(days=1) and interval != "day"):
-                need.append((last, end))
+        need = missing_ranges(cached, symbol, interval, start, end)
         if need:
             token = self._token(symbol)
             kite = self._kite()
@@ -187,7 +256,7 @@ class KiteMarketData:
                     store_candles(self.db, symbol, interval, df)
                     cur = nxt
             cached = cached_candles(self.db, symbol, interval, start, end)
-        return cached
+        return adjust_corporate_actions(cached)
 
 
 class FrameMarketData:

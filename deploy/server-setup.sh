@@ -10,10 +10,12 @@ DIR=/opt/syena
 
 [ "$(id -u)" = 0 ] || { echo "Run as root: sudo bash $0"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
+# A fresh server runs its own security updates for the first minutes; wait for apt's lock instead of failing.
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/99wait-for-lock
 
 echo "==> system updates, firewall, automatic security updates"
 apt-get update -q
-apt-get install -yq ca-certificates curl git unattended-upgrades fail2ban openssl
+apt-get install -yq ca-certificates curl git nano unattended-upgrades fail2ban openssl
 [ -f /etc/iptables/rules.v4 ] || apt-get install -yq ufw
 dpkg-reconfigure -f noninteractive unattended-upgrades
 timedatectl set-timezone Asia/Kolkata

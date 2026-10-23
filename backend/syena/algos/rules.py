@@ -4,6 +4,7 @@ from typing import Any
 import pandas as pd
 
 from syena.algos import indicators as ind
+from syena.algos import levels as lv
 from syena.algos import patterns as pat
 
 # name -> (param defaults in canonical order, outputs or None for single series, warmup multiplier key)
@@ -26,6 +27,8 @@ INDICATORS: dict[str, dict[str, Any]] = {
     "fib_ext": {"params": {"n": 50, "level": None}, "outputs": None},  # extension above the high, level > 100 (%)
     "trendline_support": {"params": {"n": 50}, "outputs": None},  # line through the last 2 swing lows, extended
     "trendline_resistance": {"params": {"n": 50}, "outputs": None},  # line through the last 2 swing highs, extended
+    "support_zone": {"params": {}, "outputs": None},     # top of the nearest horizontal support zone below price
+    "resistance_zone": {"params": {}, "outputs": None},  # bottom of the nearest horizontal resistance zone above price
 }
 FLOAT_PARAMS = {"std", "mult", "level"}
 LOOKBACK_PARAMS = {"n", "k", "d", "smooth", "fast", "slow", "signal"}
@@ -209,6 +212,10 @@ def operand_series(df: pd.DataFrame, o: dict, cache: dict | None = None) -> pd.S
             s = pat.trendline(df, p["n"], "support")
         elif name == "trendline_resistance":
             s = pat.trendline(df, p["n"], "resistance")
+        elif name in ("support_zone", "resistance_zone"):
+            if "_zones" not in cache:
+                cache["_zones"] = lv.rolling_levels(df)
+            s = cache["_zones"]["support" if name == "support_zone" else "resistance"]
         else:
             raise RuleError(name)
     cache[key] = s
@@ -325,6 +332,10 @@ def describe_operand(o: dict) -> str:
         return f"Trendline support ({p['n']} bars)"
     if name == "trendline_resistance":
         return f"Trendline resistance ({p['n']} bars)"
+    if name == "support_zone":
+        return "Support zone"
+    if name == "resistance_zone":
+        return "Resistance zone"
     return f"{name.upper()}({', '.join(str(v) for v in p.values())})"
 
 

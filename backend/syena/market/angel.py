@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from syena.config import get_settings
 from syena.db import utcnow
 from syena.market.calendar import IST
-from syena.market.data import Throttle, _frame, cached_candles, store_candles
+from syena.market.data import Throttle, _frame, adjust_corporate_actions, cached_candles, missing_ranges, store_candles
 from syena.models import AppSetting, BrokerToken
 from syena.security.crypto import decrypt, encrypt
 
@@ -273,15 +273,7 @@ class AngelMarketData:
         if interval not in INTERVALS:
             raise ValueError(f"unsupported interval {interval}")
         cached = cached_candles(self.db, symbol, interval, start, end)
-        need: list[tuple[datetime, datetime]] = []
-        if cached.empty:
-            need.append((start, end))
-        else:
-            first, last = cached.index[0].to_pydatetime(), cached.index[-1].to_pydatetime()
-            if first - start > timedelta(days=4):
-                need.append((start, first))
-            if end - last > timedelta(days=1) or (end > utcnow() - timedelta(days=1) and interval != "day"):
-                need.append((last, end))
+        need = missing_ranges(cached, symbol, interval, start, end)
         if need:
             tok = self.token(symbol)
             name, max_days = INTERVALS[interval]
@@ -297,4 +289,4 @@ class AngelMarketData:
                     store_candles(self.db, symbol, interval, _frame([tuple(r[:6]) for r in rows]))
                     cur = nxt
             cached = cached_candles(self.db, symbol, interval, start, end)
-        return cached
+        return adjust_corporate_actions(cached)

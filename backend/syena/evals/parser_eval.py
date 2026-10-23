@@ -24,6 +24,7 @@ IND = {"sma": ("sma", ["n"]), "ema": ("ema", ["n"]), "wma": ("wma", ["n"]), "rsi
        "stoch": ("stoch", ["k", "d", "smooth"]), "st": ("supertrend", ["n", "mult"]), "vol_sma": ("volume_sma", ["n"]),
        "hh": ("highest", ["n"]), "ll": ("lowest", ["n"]), "fib": ("fib", ["n", "level"]), "fibx": ("fib_ext", ["n", "level"]),
        "tls": ("trendline_support", ["n"]), "tlr": ("trendline_resistance", ["n"])}
+ZONES = {"support": "support_zone", "resistance": "resistance_zone"}
 
 
 def _operand(n: ast.AST) -> dict:
@@ -36,6 +37,8 @@ def _operand(n: ast.AST) -> dict:
             return {"kind": "price", "field": n.id}
         if n.id == "vwap":
             return {"kind": "indicator", "name": "vwap", "params": {}}
+        if n.id in ZONES:
+            return {"kind": "indicator", "name": ZONES[n.id], "params": {}}
     output = None
     if isinstance(n, ast.Attribute):
         output, n = n.attr, n.value

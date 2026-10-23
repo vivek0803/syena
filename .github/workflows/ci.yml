@@ -36,18 +36,16 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-  deploy:
-    # Optional: set repository secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY to deploy main automatically.
+  release:
+    # Every push to main that passes the tests above is marked as the "release" branch.
+    # The server checks that branch every few minutes and deploys it (deploy/auto-deploy.sh), so no server key
+    # is ever stored on GitHub, and code that fails the tests never reaches the server.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [backend, frontend]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Deploy over SSH
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
-          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          if [ -z "$HOST" ]; then echo "No deploy secrets configured; skipping."; exit 0; fi
-          mkdir -p ~/.ssh && echo "$KEY" > ~/.ssh/id && chmod 600 ~/.ssh/id
-          ssh -i ~/.ssh/id -o StrictHostKeyChecking=accept-new "$USER@$HOST" "cd ~/syena && ./deploy/deploy.sh"
+      - uses: actions/checkout@v4
+      - name: Mark this commit as the release
+        run: git push --force origin HEAD:refs/heads/release

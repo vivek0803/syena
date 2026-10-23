@@ -1,0 +1,17 @@
+# Horizontal support / resistance zones (algos/levels.py)
+- id: sr-01
+  text: "buy when close crosses above resistance"
+  entry: cross_above(close, resistance)
+- id: sr-02
+  text: "buy when price bounces off support and rsi 14 < 40"
+  entry: and(le(low, support), gt(close, support), lt(rsi(14), 40))
+- id: sr-03
+  text: "buy on resistance breakout with volume above 20 day volume sma, exit when close breaks below support"
+  entry: and(cross_above(close, resistance), gt(volume, vol_sma(20)))
+  exit: cross_below(close, support)
+- id: sr-04
+  text: "buy when close is above the support zone and a bullish engulfing forms"
+  entry: and(gt(close, support), pattern(bullish_engulfing))
+- id: sr-05
+  text: "buy when price breaks above trendline resistance"
+  entry: cross_above(close, tlr(50))

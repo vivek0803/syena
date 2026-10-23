@@ -9,7 +9,7 @@ COMPOSE="docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env
 chmod 600 deploy/.env
 
 echo "==> pulling"
-git pull --ff-only
+[ "${SYENA_SKIP_PULL:-}" = 1 ] || git pull --ff-only
 
 echo "==> building images"
 $COMPOSE build
@@ -29,5 +29,12 @@ $COMPOSE ps
 
 echo "==> health"
 sleep 5
-curl -fsS "https://$(grep '^SYENA_DOMAIN=' deploy/.env | cut -d= -f2 | awk '{print $1}')/health" && echo
+# Checked from inside the server: a server often can't reach itself through its own public address.
+for i in 1 2 3 4 5 6; do
+  if $COMPOSE exec -T api python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health', timeout=5).read().decode())"; then
+    break
+  fi
+  [ "$i" = 6 ] && { echo "Health check failed: see  $COMPOSE logs api --tail 50"; exit 1; }
+  sleep 5
+done
 echo "Done. Mode is PAPER after every deploy; switch to LIVE from Settings if you want it."

@@ -82,6 +82,7 @@ def _analysis_out(a, dec_by_sig: dict) -> dict:
     return {"symbol": (a.symbols or [None])[0], "sentiment": a.sentiment, "summary": a.summary,
             "reasoning": r.get("reasoning"), "risks": r.get("risks") or [], "action": r.get("action"),
             "confidence": r.get("confidence"), "signal_id": r.get("signal_id"), "model": a.model,
+            "event": r.get("event"), "materiality": r.get("materiality"), "materiality_basis": r.get("materiality_basis"),
             "prompt_version": a.prompt_version, "technicals": {"score": tech.get("score"), "reasons": tech.get("reasons")},
             "decision": {"id": d.id, "type": d.type.value, "summary": d.summary,
                          "failed": {"name": fail["name"], "detail": fail.get("detail")} if fail else None} if d else None}

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from syena.algos import indicators as ind
+from syena.algos import levels as lv
 from syena.algos import patterns as pat
 from syena.api.common import ser
 from syena.api.deps import authenticated
@@ -40,6 +41,7 @@ def stock(symbol: str, db: Session = Depends(get_db)):
             n = db.get(NewsItem, a.news_item_id)
             analyses.append({"id": a.id, "ts": a.created_at.isoformat(), "action": r.get("action"), "confidence": r.get("confidence"),
                              "summary": a.summary, "reasoning": r.get("reasoning"), "risks": r.get("risks") or [],
+                             "event": r.get("event"), "materiality": r.get("materiality"), "materiality_basis": r.get("materiality_basis"),
                              "sentiment": a.sentiment, "model": a.model, "prompt_version": a.prompt_version,
                              "news": {"id": n.id, "title": n.title, "url": n.url, "source": n.source} if n else None})
             if len(analyses) >= 10:
@@ -84,6 +86,7 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
              "recent_patterns": [], "trendlines": [], "intervals": _interval_options(range)}
     if df is None or df.empty:
         return empty
+    actions = df.attrs.get("corporate_actions", [])
     c = df["close"].astype(float)
     if interval == "day":
         lines = {"sma20": ind.sma(c, 20), "sma50": ind.sma(c, 50), "sma200": ind.sma(c, 200)}
@@ -110,6 +113,8 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
         # indecision candles (doji, spinning top, inside/outside bar) are left out of the list
         "recent_patterns": [p(f) for f in pat.found(df, last=month) if f["direction"] != "neutral"][-80:],
         "month_summary": pat.summary(df, since=df.index[-1] - timedelta(days=30)),
+        "corporate_actions": actions,
+        "levels": lv.levels_payload(df, interval),
         "trendlines": [{"kind": sg["kind"], "slope_pct_per_bar": sg["slope_pct_per_bar"],
                         "points": [{"t": t(ts), "v": round(v, 2)} for ts, v in sg["points"]]}
                        for sg in pat.trendline_segments(view if len(view) > 20 else df, n=min(len(view), 120))],
@@ -118,3 +123,19 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
 
 def _interval_options(range_: str) -> list[dict]:
     return [{"key": k, "label": lbl, "ok": RANGES[range_] <= mx} for k, (lbl, mx) in INTERVALS.items()]
+
+
+@router.get("/{symbol}/verify")
+def verify_prices(symbol: str, days: int = 5, db: Session = Depends(get_db)):
+    """Syena's last few daily candles next to NSE's official end-of-day prices."""
+    from syena.market import source, verify
+
+    sym = symbol.strip().upper()
+    days = max(1, min(days, 10))
+    try:
+        md = source.get_market_data(db)
+        end = utcnow()
+        daily = md.candles(sym, "day", end - timedelta(days=days * 2 + 12), end)
+    except Exception as e:
+        raise HTTPException(409, f"Price data isn't connected: {e}")
+    return verify.verify(sym, daily, days=days)

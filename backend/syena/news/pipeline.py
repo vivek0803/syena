@@ -154,6 +154,14 @@ def triage(db: Session, item: NewsItem, extra_symbols: list[str], *, model: str 
 
 
 # ---------------------------------------------------------------- analysis (point-in-time)
+def _facts_or_note(db: Session, symbol: str, daily) -> str:
+    try:
+        return company_facts(db, symbol, daily)
+    except Exception as e:  # missing company data must never stop the analysis
+        log.info("company facts unavailable", extra={"symbol": symbol, "error": str(e)})
+        return "unavailable"
+
+
 def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime, *, event_type: str | None = None,
             model: str | None = None, shadow: bool = False, eval_run_id: int | None = None) -> dict:
     daily = md.candles(symbol, "day", as_of - timedelta(days=400), as_of)
@@ -178,6 +186,7 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
     res = llm.call(db, "news_analysis", "news_analysis", tier=None if model else "analysis", model=model, max_tokens=900,
                    shadow=shadow, eval_run_id=eval_run_id,
                    variables={"symbol": symbol, "news": news_txt, "technicals": json.dumps(tech),
+                              "company": _facts_or_note(db, symbol, daily),
                               "context": json.dumps(ctx), "lessons": pretrade.lessons_context(active),
                               "similar": untrusted(json.dumps(consult.similar, default=str)[:2500], "similar_trades")})
     d = res.data or {}
@@ -193,9 +202,45 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
     ltp = md.ltp([symbol]).get(symbol)
     return {"symbol": symbol, "action": action, "confidence": conf, "sentiment": d.get("sentiment"),
             "summary": d.get("summary"), "reasoning": d.get("reasoning"), "cited": cited, "risks": d.get("risks"),
+            "event": d.get("event"), "materiality": d.get("materiality"), "materiality_basis": d.get("materiality_basis"),
             "llm_technicals_agree": d.get("technicals_agree"), "technicals": tech, "context": ctx, "setup": setup,
             "consult": consult, "model": res.model, "prompt_version": res.prompt_version, "ai_call_id": res.ai_call_id,
             "price": ltp or price, "as_of": as_of.isoformat(), "liquidity": liquidity(db, symbol, daily)}
+
+
+def company_facts(db: Session, symbol: str, daily) -> str:
+    """Size and state of the company, so the AI can judge how big a piece of news is for it (an order worth 10% of
+    the market cap is huge, 0.5% is routine) and whether the price is stretched or beaten down."""
+    from syena.screener import compare
+
+    row = compare.metrics(db, [symbol])[0]
+    lines = [f"Name: {row.get('name') or symbol}; sector: {row.get('sector') or 'unknown'}; industry: {row.get('industry') or 'unknown'}"]
+    mcap = row.get("market_cap")
+    if mcap:
+        lines.append(f"Market cap: ₹{mcap:,.0f} Cr")
+        if row.get("ps"):
+            lines.append(f"Annual revenue (approx, market cap / P/S): ₹{mcap / row['ps']:,.0f} Cr")
+        if row.get("pe") and row["pe"] > 0:
+            lines.append(f"Annual net profit (approx, market cap / P/E): ₹{mcap / row['pe']:,.0f} Cr")
+        elif row.get("pe") is not None and row["pe"] <= 0:
+            lines.append("Loss-making (negative P/E)")
+    labels = {"pe": "P/E", "sales_growth": "Sales growth % YoY", "profit_growth": "Profit growth % YoY", "opm": "Operating margin %",
+              "debt_to_equity": "Debt/Equity", "roe": "ROE %", "promoter_holding": "Promoter holding %",
+              "pct_from_52w_high": "% from 52-week high"}
+    extra = [f"{lbl}: {row[k]:g}" for k, lbl in labels.items() if row.get(k) is not None]
+    if extra:
+        lines.append("; ".join(extra))
+    if daily is not None and len(daily) > 22:
+        c = daily["close"].astype(float)
+        moves = [f"1-month move: {(c.iloc[-1] / c.iloc[-22] - 1) * 100:+.1f}%"]
+        if len(c) > 64:
+            moves.append(f"3-month move: {(c.iloc[-1] / c.iloc[-64] - 1) * 100:+.1f}%")
+        hi = float(daily["high"].astype(float).tail(252).max())
+        moves.append(f"{(c.iloc[-1] / hi - 1) * 100:+.1f}% vs 52-week high {hi:,.2f}")
+        lines.append("; ".join(moves))
+    if not mcap:
+        lines.append("Market cap unknown: refresh company data (Screener → Update data) for size-aware judgement")
+    return "\n".join(lines)
 
 
 def liquidity(db: Session, symbol: str, daily) -> dict:
@@ -227,6 +272,8 @@ def technical_points(tech: dict) -> float:
         if tf.get("available") and tf.get("timeframe") in ("daily", "1-hour"):
             pts += {"bullish": 8, "bearish": -8}.get(tf.get("bias"), 0)
             pts += 8 if "breakout" in (tf.get("trendline") or "") else -8 if "breakdown" in (tf.get("trendline") or "") else 0
+    # support/resistance zones + market structure on the daily chart: -1..+1 for a long
+    pts += 15 * float(tech.get("zone_points") or 0)
     return round(_clip(pts), 1)
 
 

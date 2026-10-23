@@ -2,6 +2,7 @@ import { createChart, CrosshairMode, IChartApi, ISeriesApi, LineStyle, SeriesMar
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import AiVerdict from "../components/AiVerdict";
+import { ZoneBands } from "../components/zoneBands";
 import { Empty, ErrorNote, Loading, Page, Panel, Pill, Tabs, decisionLabel, decisionTone } from "../components/ui";
 import { api } from "../lib/api";
 import { day, signed, tone, when } from "../lib/format";
@@ -95,6 +96,9 @@ function StockView({ symbol }: { symbol: string }) {
           {chart.isLoading ? <div className="h-[460px]"><Loading what="Loading prices" /></div>
             : !chart.data?.candles?.length ? <div className="p-6"><Empty title="No price data">Angel One returned no candles for this range (market holiday, or a newly listed stock).</Empty></div>
             : <PriceChart data={chart.data} trades={info.data?.trades ?? []} />}
+          {chart.data?.corporate_actions?.length > 0 && <p className="px-4 pb-3 text-[12px] text-mute">
+            {chart.data.corporate_actions.map((a: any) => a.adjusted ? `${a.label} on ${a.date}: earlier prices adjusted so the chart is continuous`
+              : `${a.label} on ${a.date}: not adjusted, check it`).join(" · ")}</p>}
         </Panel>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -115,6 +119,8 @@ function StockView({ symbol }: { symbol: string }) {
           </div>
           <div className="space-y-6">
             <Panel title="Key figures"><Figures m={m} rsi={chart.data?.rsi?.at(-1)?.v} /></Panel>
+            <LevelsPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
+            <VerifyPanel symbol={symbol} />
             <PatternPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
             {info.data?.trades?.length > 0 && <Panel title="Trades">
               <ul className="space-y-2 text-sm">{info.data.trades.slice(0, 12).map((t: any) => (
@@ -129,6 +135,60 @@ function StockView({ symbol }: { symbol: string }) {
         </div>
       </div>
     </Page>
+  );
+}
+
+function LevelsPanel({ data, label }: { data: any; label: string }) {
+  const lv = data?.levels;
+  if (!lv) return null;
+  const price = data.candles?.at(-1)?.c;
+  const row = (z: any, i: number, kind: string) => (
+    <li key={kind + i} className="py-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className={`w-7 font-semibold ${kind === "R" ? "text-loss" : "text-gain"}`}>{kind}{i + 1}</span>
+        <span className="tabular-nums">₹{n(z.low)} – {n(z.high)}</span>
+        <span className={`ml-auto text-[12px] ${z.strength === "strong" ? "text-parch" : "text-mute"}`}>{z.strength}</span>
+        <span className="w-14 text-right text-[12px] tabular-nums text-mute">{z.distance_pct > 0 ? "+" : ""}{z.distance_pct}%</span>
+      </div>
+      <p className="pl-9 text-[12px] text-mute">{z.why}</p>
+    </li>);
+  return (
+    <Panel title="Support & resistance" aside={<span className="text-[12px] text-mute">{label} candles</span>}>
+      {lv.trend && <p className="mb-2 text-sm"><span className="text-mute">Market structure:</span> <b className={lv.trend === "uptrend" ? "text-gain" : lv.trend === "downtrend" ? "text-loss" : "text-parch"}>{lv.trend}</b>
+        {lv.break && <span className="text-parch-dim"> · {lv.break.direction} break through ₹{n(lv.break.level)}</span>}</p>}
+      <ul className="divide-y divide-dusk-line text-sm">
+        {[...(lv.resistances ?? [])].reverse().map((z: any, i: number, a: any[]) => row(z, a.length - 1 - i, "R"))}
+        <li className="py-1.5 text-[12px] text-saffron">Price now ₹{n(price)}</li>
+        {(lv.supports ?? []).map((z: any, i: number) => row(z, i, "S"))}
+      </ul>
+      {!lv.resistances?.length && !lv.supports?.length && <p className="text-sm text-parch-dim">Not enough swings on these candles to find zones: try a longer range.</p>}
+      <p className="mt-3 text-[12px] text-mute">Zones are where several swing highs/lows cluster. Stronger with more touches, bigger bounces, a support-resistance flip and a matching level on the {data.interval === "day" ? "weekly" : "daily"} chart. HH/HL = higher high/low, LH/LL = lower, EH/EL = about equal. In algos: “buy when price bounces off support”, “buy when close breaks above resistance”.</p>
+    </Panel>
+  );
+}
+
+function VerifyPanel({ symbol }: { symbol: string }) {
+  const [res, setRes] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<any>(null);
+  const run = () => { setBusy(true); setErr(null); api<any>(`/api/stock/${symbol}/verify?days=5`).then(setRes).catch(setErr).finally(() => setBusy(false)); };
+  return (
+    <Panel title="Are these prices right?">
+      <p className="mb-2 text-[12px] text-mute">Compares the last 5 daily candles with NSE's official end-of-day file (bhavcopy), independent of the broker the chart comes from.</p>
+      <button type="button" className="btn-ghost" onClick={run} disabled={busy}>{busy ? "Checking…" : res ? "Check again" : "Check against NSE"}</button>
+      <ErrorNote error={err} />
+      {res && (res.error ? <p className="mt-2 text-sm text-saffron">{res.error}</p> : (
+        <div className="mt-3 text-sm">
+          <p className={res.ok ? "text-gain" : "text-saffron"}>{res.ok ? `✓ All ${res.checked} days match NSE` : `${res.matched} of ${res.checked} days match NSE`}</p>
+          <ul className="mt-1 space-y-1">{res.days.map((d: any) => (
+            <li key={d.date} className="flex gap-2 text-[13px]">
+              <span className="w-24 tabular-nums text-mute">{d.date}</span>
+              <span className={d.status === "match" ? "text-gain" : d.status === "mismatch" ? "text-loss" : "text-mute"}>{d.status === "match" ? "match" : d.status.replace(/_/g, " ")}</span>
+              {d.detail && <span className="flex-1 text-[12px] text-mute">{d.detail}</span>}
+            </li>))}</ul>
+          <p className="mt-2 text-[12px] text-mute">Allowed difference {res.tolerance_pct}%. NSE's “close” is the average of the last 30 minutes, so a close matching the last trade price also counts.</p>
+        </div>))}
+    </Panel>
   );
 }
 
@@ -187,7 +247,7 @@ function Figures({ m, rsi }: { m: any; rsi?: number }) {
 function PriceChart({ data, trades }: { data: any; trades: any[] }) {
   const box = useRef<HTMLDivElement>(null);
   const rsiBox = useRef<HTMLDivElement>(null);
-  const [on, setOn] = useState<Record<string, boolean>>({ sma20: false, sma50: true, sma200: true, ema20: true, vwap: true, ema50: false, patterns: true, trendlines: true });
+  const [on, setOn] = useState<Record<string, boolean>>({ sma20: false, sma50: true, sma200: true, ema20: true, vwap: true, ema50: false, patterns: true, trendlines: false, zones: true, structure: true });
   const [hover, setHover] = useState<any>(null);
   const intraday = data.interval !== "day";
   const shift = (t: number) => (t + (intraday ? IST : 0)) as UTCTimestamp;
@@ -209,6 +269,13 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
       const b = t.closed_at && t.exit_price_executed ? snap(t.closed_at) : null;
       if (b != null) out.push({ time: shift(b), position: short ? "belowBar" : "aboveBar", color: "#ECE6D8", shape: "circle", text: short ? "Cover" : "Sell" });
     }
+    if (on.structure) {
+      for (const sw of data.levels?.swings ?? []) {
+        if (sw.t < lo) continue;  // swings in the warm-up history before the visible range
+        const top = sw.label.endsWith("H");
+        out.push({ time: shift(sw.t), position: top ? "aboveBar" : "belowBar", color: "#B9B3A6", shape: top ? "arrowDown" : "arrowUp", size: 0, text: sw.label } as SeriesMarker<Time>);
+      }
+    }
     if (on.patterns) {
       const recent = data.candles.length > 20 ? data.candles[data.candles.length - 20].t : 0;
       const seen = new Set<string>();
@@ -223,7 +290,7 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
       }
     }
     return out.sort((x, y) => (x.time as number) - (y.time as number));
-  }, [data, trades, on.patterns]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, trades, on.patterns, on.structure]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!box.current || !rsiBox.current) return;
@@ -255,6 +322,14 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
         const pts = tl.points.map((p: any) => ({ time: shift(p.t), value: p.v })).filter((p: any, i: number, a: any[]) => i === 0 || p.time > a[i - 1].time);
         s.setData(pts);
       }
+    }
+    if (on.zones && data.levels) {
+      const bands = [
+        ...(data.levels.resistances ?? []).map((z: any, i: number) => ({ low: z.low, high: z.high, color: C.down, label: `R${i + 1} · ${z.strength} · ${z.touches} touches` })),
+        ...(data.levels.supports ?? []).map((z: any, i: number) => ({ low: z.low, high: z.high, color: C.up, label: `S${i + 1} · ${z.strength} · ${z.touches} touches` })),
+      ];
+      candles.attachPrimitive(new ZoneBands(bands));
+      for (const b of bands) candles.createPriceLine({ price: (b.low + b.high) / 2, color: b.color, lineVisible: false, axisLabelVisible: true, title: b.label.split(" ")[0], lineWidth: 1, lineStyle: LineStyle.Solid });
     }
     candles.setMarkers(markers);
     ch.timeScale().fitContent();
@@ -290,7 +365,7 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
         <span>C <b className={c.c >= c.o ? "text-gain" : "text-loss"}>{n(c.c)}</b></span>
         <span className="text-mute">Vol {n(c.v, 0)}</span>
         <span className="ml-auto flex flex-wrap gap-1.5">
-          {[["patterns", "Candle patterns"], ["trendlines", "Trendlines"]].map(([k, label]) => (
+          {[["zones", "S/R zones"], ["structure", "HH/HL"], ["patterns", "Candle patterns"], ["trendlines", "Trendlines"]].map(([k, label]) => (
             <button key={k} type="button" aria-pressed={!!on[k]} onClick={() => setOn({ ...on, [k]: !on[k] })}
               className={`rounded-md border px-2 py-0.5 ${on[k] ? "border-dusk-line text-parch" : "border-transparent text-mute"}`}>{label}</button>))}
           {Object.keys(data.lines ?? {}).map((k) => (
@@ -303,7 +378,7 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
       <div ref={box} className="h-[420px] w-full" aria-label={`${data.symbol} price chart`} />
       <div className="flex items-center gap-2 px-2 pt-1 text-[12px] text-mute">RSI 14 <span className="text-parch-dim">{n(data.rsi?.at(-1)?.v, 0)}</span> <span>(above 70 overbought, below 30 oversold)</span></div>
       <div ref={rsiBox} className="h-[110px] w-full" aria-label="RSI chart" />
-      <p className="px-2 pt-2 text-[12px] text-mute">Arrows mark Syena's entries (▲ buy, ▼ short); dots mark exits. Small markers are candlestick patterns (green bullish, red bearish; named on the last 20 candles); dashed lines are the current trendlines through the last two swing lows (support) and highs (resistance).</p>
+      <p className="px-2 pt-2 text-[12px] text-mute">Arrows mark Syena's entries (▲ buy, ▼ short); dots mark exits. Small markers are candlestick patterns (green bullish, red bearish; named on the last 20 candles); shaded bands are support (green) and resistance (red) zones; HH/HL/LH/LL label the swings (market structure); trendlines (off by default) join the last two swing lows / highs.</p>
     </div>
   );
 }

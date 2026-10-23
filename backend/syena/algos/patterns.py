@@ -97,23 +97,28 @@ def detect(df: pd.DataFrame, name: str) -> pd.Series:
     hammer_shape = (lower >= body * 2) & (lower >= rng * 0.6) & (upper <= rng * 0.15) & small & normal
     inv_shape = (upper >= body * 2) & (upper >= rng * 0.6) & (lower <= rng * 0.15) & small & normal
     tol = rng.rolling(10, min_periods=3).mean().shift(1) * 0.05
+    # a rejection candle has to be AT the extreme: its low is the lowest of the last TREND+1 candles (bottom
+    # patterns) or its high the highest (top patterns). Checked against TA-Lib: without this, hammers show up
+    # half-way down a candle after a fall, where nothing was actually rejected.
+    at_low = l <= l.rolling(TREND + 1, min_periods=2).min() + tol
+    at_high = h >= h.rolling(TREND + 1, min_periods=2).max() - tol
     out = {
         "doji": doji,
         "spinning_top": ~doji & (body <= rng * 0.3) & (upper >= body) & (lower >= body),
-        "dragonfly_doji": doji & (upper <= rng * 0.1) & (lower >= rng * 0.6) & down,
-        "gravestone_doji": doji & (lower <= rng * 0.1) & (upper >= rng * 0.6) & up,
-        "hammer": hammer_shape & down,
-        "hanging_man": hammer_shape & up,
-        "inverted_hammer": inv_shape & down,
-        "shooting_star": inv_shape & up,
+        "dragonfly_doji": doji & (upper <= rng * 0.1) & (lower >= rng * 0.6) & down & at_low,
+        "gravestone_doji": doji & (lower <= rng * 0.1) & (upper >= rng * 0.6) & up & at_high,
+        "hammer": hammer_shape & down & at_low,
+        "hanging_man": hammer_shape & up & at_high,
+        "inverted_hammer": inv_shape & down & at_low,
+        "shooting_star": inv_shape & up & at_high,
         "bullish_engulfing": pred & green & (c >= po) & (o <= pc) & (body > pbody) & down,
         "bearish_engulfing": pgreen & red & (o >= pc) & (c <= po) & (body > pbody) & up,
         "piercing_line": pred & (pbody >= avg) & green & (o < pc) & (c > mid_prev) & (c < po) & down,
         "dark_cloud_cover": pgreen & (pbody >= avg) & red & (o > pc) & (c < mid_prev) & (c > po) & up,
         "bullish_harami": pred & (pbody >= avg) & green & (o > pc) & (c < po) & (body < pbody * 0.6) & down,
         "bearish_harami": pgreen & (pbody >= avg) & red & (o < pc) & (c > po) & (body < pbody * 0.6) & up,
-        "tweezer_bottom": pred & green & ((l - pl).abs() <= tol) & down,
-        "tweezer_top": pgreen & red & ((h - ph).abs() <= tol) & up,
+        "tweezer_bottom": pred & green & ((l - pl).abs() <= tol) & down & at_low,
+        "tweezer_top": pgreen & red & ((h - ph).abs() <= tol) & up & at_high,
         "bullish_marubozu": green & long_body & (upper <= rng * 0.05) & (lower <= rng * 0.05),
         "bearish_marubozu": red & long_body & (upper <= rng * 0.05) & (lower <= rng * 0.05),
         "inside_bar": (h < ph) & (l > pl),

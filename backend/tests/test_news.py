@@ -72,7 +72,7 @@ def test_process_symbol_places_paper_trade_with_full_record(db, user, fake_llm, 
     if d.type == DecisionType.PLACED:
         t = db.get(Trade, d.trade_id)
         assert t.news_item_ids == [item.id] and t.stop_loss < t.entry_price < t.target and t.auto_sell
-    assert db.scalar(select(AICall)).prompt_version == "v4"
+    assert db.scalar(select(AICall)).prompt_version == "v5"
 
 
 def test_low_confidence_rejected_with_exact_check(db, user, fake_llm, md):

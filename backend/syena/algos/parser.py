@@ -35,7 +35,8 @@ VOCAB = sorted({
     "candlestick", "pattern", "engulfing", "hammer", "inverted", "doji", "dragonfly", "gravestone", "harami", "marubozu",
     "soldiers", "crows", "tweezer", "tweezers", "piercing", "shooting", "star", "morning", "evening", "hanging", "spinning",
     "trendline", "trend", "inside", "outside", "gap", "forms", "appears", "reversal", "cloud", "cover", "dark", "three",
-    "white", "black", "bottom", "top", "support", "resistance",
+    "white", "black", "bottom", "top", "support", "resistance", "zone", "bounces", "bounce", "holds",
+    "rejected", "breaks", "breakout", "breakdown", "tests", "touches", "near", "srs", "srr",
 })
 
 # phrase -> candlestick pattern name (longest phrases first so "inverted hammer" wins over "hammer")
@@ -189,6 +190,24 @@ def _pattern_pass(t: str, notes: list[str]) -> str:
                lambda m: f"crosses below tls_{n_of(m, 2)}", t)
     t = re.sub(r"\btrendline breakout(?:\s*@(\d+))?", lambda m: f"close crosses above tlr_{n_of(m)}", t)
     t = re.sub(r"\btrendline breakdown(?:\s*@(\d+))?", lambda m: f"close crosses below tls_{n_of(m)}", t)
+    # horizontal support / resistance zones (whatever is left after the trendline phrases above)
+    zone = r"(?:the |a |nearest |key |strong |major )*"
+    subj = lambda m: {"price": "close", None: "close"}.get(m.group(1), m.group(1))  # noqa: E731
+    t = re.sub(r"\b(?:(close|price|high|low) )?(?:breaks?|broke|crosses|crossed|moves?|closes?)(?: out)? (?:above|over|up through) " + zone
+               + r"resistance(?: zone| level)?", lambda m: f"{subj(m)} crosses above srr", t)
+    t = re.sub(r"\b(?:(close|price|high|low) )?(?:breaks?|broke|crosses|crossed|moves?|closes?)(?: down)? (?:below|under|down through) " + zone
+               + r"support(?: zone| level)?", lambda m: f"{subj(m)} crosses below srs", t)
+    t = re.sub(r"\bresistance breakout\b", "close crosses above srr", t)
+    t = re.sub(r"\bsupport breakdown\b", "close crosses below srs", t)
+    # touching a zone and holding it: low reaches support but the candle closes above; high reaches resistance, closes below
+    t = re.sub(r"\b(?:price )?(?:bounces? (?:off|from)|holds?|tests?|is (?:near|at)|near|at|touches?|takes support (?:at|from)) " + zone + r"support(?: zone| level)?",
+               " ( low <= srs and close > srs ) ", t)
+    t = re.sub(r"\b(?:price )?(?:gets? rejected (?:at|from)|is rejected (?:at|from)|tests?|is (?:near|at)|near|at|touches?) " + zone + r"resistance(?: zone| level)?",
+               " ( high >= srr and close < srr ) ", t)
+    t = re.sub(r"\b" + zone + r"support (?:zone|level)\b", "srs", t)
+    t = re.sub(r"\b" + zone + r"resistance (?:zone|level)\b", "srr", t)
+    t = re.sub(r"(?<![a-z_])(?<!fib )(?<!fibonacci )(?:the )?support(?![a-z_])", "srs", t)  # "fib support" stays a Fib question
+    t = re.sub(r"(?<![a-z_])(?<!fib )(?<!fibonacci )(?:the )?resistance(?![a-z_])", "srr", t)
     for phrase, name in PATTERN_PHRASES:
         t = re.sub(r"\b(?:a |an |the )?" + phrase + r"(?: candlestick| candle)?(?: pattern)?\b", f" pat_{name} ", t)
     return t
@@ -297,6 +316,10 @@ def _operand(s: str, notes: list[str], other: dict | None = None) -> dict:
     m = re.fullmatch(r"(tls|tlr)_(\d+)", s)
     if m:
         return _ind("trendline_support" if m.group(1) == "tls" else "trendline_resistance", n=int(m.group(2)))
+    if s == "srs":
+        return _ind("support_zone")
+    if s == "srr":
+        return _ind("resistance_zone")
     if s in ("trendline", "trendline support", "trendline resistance"):
         raise Clarify("Which trendline: support (through recent swing lows) or resistance (through recent swing highs)?")
     m = re.fullmatch(r"(fib|fibext)_(\d+)_(" + NUM + r")", s)
