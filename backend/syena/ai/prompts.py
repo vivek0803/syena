@@ -61,7 +61,7 @@ RULE_PARSER = Prompt(
 )
 
 NEWS_TRIAGE = Prompt(
-    "news_triage", "v2",
+    "news_triage", "v3",
     "You triage Indian market news for a single-stock NSE trading system. " + DATA_RULE + "\n"
     "Decide if the item is materially price-relevant for specific listed Indian companies within 5 trading days. "
     "Map it only to NSE symbols from the candidate list when the company is clearly the subject. "
@@ -70,6 +70,11 @@ NEWS_TRIAGE = Prompt(
     "ESOP allotments, change of address/RTA/compliance officer, board meeting date intimations without results, "
     "credit rating reaffirmed with no change, and similar paperwork. Relevant examples: results, large orders, "
     "acquisitions, rating changes, regulatory actions, guidance, management exits, fund raising, block deals. "
+    "Be strict, each relevant item costs a full analysis: mark it relevant only if it could plausibly move the stock "
+    "2% or more, e.g. an order that is large for the company's size, a new business, acquisition, capacity expansion, "
+    "key approval, court ruling, audit cleared, rating up/downgrade, warrants/QIP, subsidiary IPO, index inclusion or "
+    "exclusion, results, senior management or auditor exit, fraud, raid, cyber attack. Small routine orders, general "
+    "sector or macro commentary, price-movement reports ('stock rises 3%') and market wrap-ups are NOT relevant. "
     "Output ONLY JSON: {\"relevant\":bool,\"symbols\":[\"SYM\",..],\"event_type\":\"earnings|order_win|regulatory|"
     "management|m&a|rating|macro|corporate_action|litigation|other\",\"reason\":\"one sentence\"}",
     "Candidate symbols (symbol: company): {candidates}\n\nNews item:\n{item}",

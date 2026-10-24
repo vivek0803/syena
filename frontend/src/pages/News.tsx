@@ -124,7 +124,7 @@ export default function News() {
           <optgroup label="One source">{(srcs.data ?? []).map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}</optgroup>
         </select>
         <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          {["", "ANALYSED", "TRIAGED", "IRRELEVANT", "STALE", "DUPLICATE", "NEW", "ERROR", "FAILED"].map((s) => <option key={s} value={s}>{s ? s.toLowerCase() : "all articles"}</option>)}
+          {["", "ANALYSED", "TRIAGED", "IRRELEVANT", "FILTERED", "STALE", "DUPLICATE", "NEW", "ERROR", "FAILED"].map((s) => <option key={s} value={s}>{s ? s.toLowerCase() : "all articles"}</option>)}
         </select>
         <input className="input w-32" placeholder="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
       </div>

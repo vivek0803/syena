@@ -69,9 +69,9 @@ DEFAULTS: dict[str, Any] = {
     "market_context": {"w_nifty": 0.5, "w_sensex": 0.2, "w_vix": 0.3, "nifty_scale_pct": 1.0, "vix_scale_pct": 5.0},
     "models": {
         "triage": "claude-haiku-5-5",
-        "analysis": "claude-sonnet-5-5",
-        "review": "claude-opus-5-5",
-        "judge": "claude-sonnet-5-5",
+        "analysis": "claude-haiku-5-5",
+        "review": "claude-haiku-5-5",
+        "judge": "claude-haiku-5-5",
         "second_opinion": None,  # required to agree in LIVE when set
         "shadow_analysis": None,  # challenger model run in parallel, never traded
     },
@@ -93,7 +93,7 @@ DEFAULTS: dict[str, Any] = {
         # News older than this (by its published time) is skipped: no AI call, no trade.
         "max_age_minutes": 15,
         # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
-        "symbol_dedup_minutes": 30,
+        "symbol_dedup_minutes": 60,  # same stock analysed in the last hour: another source's copy, no second AI call
         "read_images": True,  # read text in Telegram post images with the AI (triage model)
         # candlestick patterns + trendlines shown to the AI for each analysed stock, per timeframe, over this many days
         "pattern_timeframes": ["day", "60minute", "15minute", "5minute", "minute"],

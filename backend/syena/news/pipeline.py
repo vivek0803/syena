@@ -125,7 +125,7 @@ def read_images(db: Session, item: NewsItem, http_get=None) -> int:
 
 
 def item_text(item: NewsItem) -> str:
-    limit = 7000 if sources.FILING_MARK in (item.body or "") else 1500  # filings: keep the figures from the PDF
+    limit = 5000 if sources.FILING_MARK in (item.body or "") else 1500  # filings: keep the figures from the PDF
     return f"[{item.id}] {item.published_at.isoformat()} {item.source}: {item.title}\n{(item.body or '')[:limit]}"
 
 
@@ -154,6 +154,17 @@ def triage(db: Session, item: NewsItem, extra_symbols: list[str], *, model: str 
 
 
 # ---------------------------------------------------------------- analysis (point-in-time)
+def technicals_brief(tech: dict) -> str:
+    """The technical picture in a few lines for the AI. The system scores technicals itself (15%), so the AI only
+    needs enough to mention timing or risk, not the full data (that cut the prompt by ~1,500 tokens a call)."""
+    if not tech.get("available"):
+        return "no price history"
+    lines = [f"close {tech.get('close')}; SMA50 {tech.get('sma50')}; SMA200 {tech.get('sma200')}; RSI14 {tech.get('rsi14')}; "
+             f"MACD hist {'positive' if (tech.get('macd_hist') or 0) > 0 else 'negative'}"]
+    lines += [r for r in (tech.get("reasons") or []) if not r.startswith(("close ", "MACD"))][:8]
+    return "\n".join(lines)[:1200]
+
+
 def _facts_or_note(db: Session, symbol: str, daily) -> str:
     try:
         return company_facts(db, symbol, daily)
@@ -185,10 +196,10 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
     news_txt = untrusted("\n\n".join(item_text(i) for i in items if i.published_at <= as_of), "news")
     res = llm.call(db, "news_analysis", "news_analysis", tier=None if model else "analysis", model=model, max_tokens=900,
                    shadow=shadow, eval_run_id=eval_run_id,
-                   variables={"symbol": symbol, "news": news_txt, "technicals": json.dumps(tech),
+                   variables={"symbol": symbol, "news": news_txt, "technicals": technicals_brief(tech),
                               "company": _facts_or_note(db, symbol, daily),
                               "context": json.dumps(ctx), "lessons": pretrade.lessons_context(active),
-                              "similar": untrusted(json.dumps(consult.similar, default=str)[:2500], "similar_trades")})
+                              "similar": untrusted(json.dumps(consult.similar, default=str)[:1200], "similar_trades")})
     d = res.data or {}
     action = str(d.get("action", "HOLD")).upper()
     action = action if action in ("BUY", "SELL", "HOLD") else "HOLD"
@@ -337,6 +348,39 @@ def friendly_error(e: Exception) -> str:
     if "budget" in msg.lower():
         return f"daily AI budget reached ({msg})"
     return msg[:300] or type(e).__name__
+
+
+def pre_ai_liquidity(db: Session, symbol: str, md, now: datetime) -> str | None:
+    """Market cap / turnover check done BEFORE the AI call. Returns the reason when the stock is too small to trade.
+    Unknown values pass (the full check after the analysis still runs)."""
+    g = settings_store.get(db, "trade_gate")
+    mcap_min, tv_min = float(g.get("min_market_cap_cr") or 0), float(g.get("min_avg_turnover_cr") or 0)
+    if not (mcap_min or tv_min):
+        return None
+    try:
+        daily = md.candles(symbol, "day", now - timedelta(days=45), now)
+    except Exception:
+        daily = None
+    liq = liquidity(db, symbol, daily)
+    problems = []
+    if mcap_min and liq["market_cap_cr"] is not None and liq["market_cap_cr"] < mcap_min:
+        problems.append(f"market cap ₹{liq['market_cap_cr']:,.0f} cr < ₹{mcap_min:,.0f} cr")
+    if tv_min and liq["avg_turnover_cr"] is not None and liq["avg_turnover_cr"] < tv_min:
+        problems.append(f"average daily turnover ₹{liq['avg_turnover_cr']:,.2f} cr < ₹{tv_min:g} cr")
+    return "; ".join(problems) or None
+
+
+def record_filtered(db: Session, symbol: str, items: list, why: str) -> None:
+    try:
+        algo = news_algo(db)
+        engine.record_verdict(db, engine.TradeIntent(symbol=symbol, style=algo.style, source="news", ref_price=0.0, algo_id=algo.id,
+                                                     inputs={"news": [{"id": i.id, "title": i.title} for i in items]},
+                                                     news_item_ids=[i.id for i in items]),
+                              DecisionType.REJECTED, f"REJECTED by liquidity before the AI (no AI cost): {why}",
+                              [Check("liquidity", False, f"{why} (checked before the AI analysis)")])
+    except Exception as e2:
+        db.rollback()
+        log.warning("could not record rejection", extra={"stock": symbol, "error": str(e2)})
 
 
 def reject_error(db: Session, symbol: str, items: list, step: str, e: Exception) -> None:
@@ -548,13 +592,20 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
     for sym, (items, etype) in by_symbol.items():
         # the same stock + same kind of event was already analysed recently (another source's version of the story)
         recent = [a for a in db.scalars(select(NewsAnalysis).where(NewsAnalysis.stage == "analysis", NewsAnalysis.created_at >= window))
-                  if sym in (a.symbols or []) and (a.event_type or None) == (etype or None)
-                  and a.news_item_id not in {i.id for i in items}]
+                  if sym in (a.symbols or []) and a.news_item_id not in {i.id for i in items}]
         if recent:
             for it in items:
                 it.status, it.dup_of_id = "DUPLICATE", recent[-1].news_item_id
             db.commit()
             stats["symbol_duplicates"] += 1
+            continue
+        too_small = pre_ai_liquidity(db, sym, md, now)
+        if too_small:  # too small or illiquid to trade anyway: reject before paying for an AI analysis
+            for it in items:
+                it.status = "FILTERED"
+            db.commit()
+            record_filtered(db, sym, items, too_small)
+            stats["filtered_before_ai"] = stats.get("filtered_before_ai", 0) + 1
             continue
         for it in items:  # exchange filings: read the attached PDF so the AI sees the numbers, not just the headline
             if is_filing(it) and sources.FILING_MARK not in (it.body or ""):

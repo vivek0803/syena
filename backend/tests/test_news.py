@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from syena import settings_store
 from syena.db import utcnow
@@ -375,3 +375,39 @@ def test_pdf_text_and_skip_sme_symbols(db):
         assert calls == ["https://www.nseindia.com/a.html", "https://nsearchives.nseindia.com/corporate/X.pdf"]
     finally:
         S.pdf_text = monkeypatch_pdf
+
+
+def test_small_company_filtered_before_any_ai_call(db, user, fake_llm, md):
+    from datetime import date as _date
+
+    from syena.models import Stock, StockDaily
+
+    now = _news_now(md)
+    db.add(Stock(symbol="INFY", active=True))
+    db.add(StockDaily(symbol="INFY", day=_date(2026, 10, 15), close=1500, market_cap_cr=300))
+    db.commit()
+    why = pipeline.pre_ai_liquidity(db, "INFY", md, now)
+    assert why and "market cap ₹300 cr" in why
+    item = NewsItem(source="t", url="u", title="Infosys wins order", published_at=now, content_hash="h-pre")
+    db.add(item)
+    db.commit()
+    before = db.scalar(select(func.count()).select_from(AICall))
+    pipeline.record_filtered(db, "INFY", [item], why)
+    d = db.scalar(select(Decision).order_by(Decision.id.desc()))
+    assert d.type == DecisionType.REJECTED and "no AI cost" in d.summary
+    assert db.scalar(select(func.count()).select_from(AICall)) == before
+
+
+def test_technicals_brief_is_short():
+    tech = {"available": True, "close": 100, "sma50": 95, "sma200": 90, "rsi14": 55, "macd_hist": 0.4,
+            "reasons": ["close above SMA50", "candles: Hammer (bullish, 01 Oct)"] + [f"x{i} " * 40 for i in range(20)]}
+    out = pipeline.technicals_brief(tech)
+    assert len(out) <= 1200 and "Hammer" in out and out.startswith("close 100")
+
+
+def test_cached_prompt_tokens_cost_a_tenth(db):
+    from syena.ai import llm
+
+    full = llm.cost(db, "claude-sonnet-5-5", 10_000, 500)
+    cached = llm.cost(db, "claude-sonnet-5-5", 2_000, 500, cache_read=8_000)
+    assert cached < full * 0.5

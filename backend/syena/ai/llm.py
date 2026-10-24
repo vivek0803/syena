@@ -43,7 +43,13 @@ class LLMResult:
     latency_ms: int
 
 
+CACHE_MIN_CHARS = 4000  # ~1,000+ tokens: below the API's minimum a cache mark does nothing anyway
+CACHE_READ_FACTOR, CACHE_WRITE_FACTOR = 0.1, 1.25  # of the normal input price
+
+
 class Backend:
+    last_cache: tuple[int, int] = (0, 0)  # (tokens read from cache, tokens written to cache) on the last call
+
     def complete(self, model: str, system: str, user: str, max_tokens: int, images=None, temperature=None) -> tuple[str, int, int]:
         raise NotImplementedError
 
@@ -62,19 +68,24 @@ class AnthropicBackend(Backend):
             content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(b).decode()}}
                        for mt, b in images] + [{"type": "text", "text": user}]
         kw = {"temperature": temperature} if temperature is not None else {}
+        # Long system prompts (the news-analysis playbook) are the same on every call: mark them cacheable so
+        # repeat calls within a few minutes pay about a tenth for that part. Short ones are sent as plain text.
+        sys_arg = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if len(system) >= CACHE_MIN_CHARS else system
         try:
             r = self.client.messages.create(
-                model=model, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": content}], **kw
+                model=model, max_tokens=max_tokens, system=sys_arg, messages=[{"role": "user", "content": content}], **kw
             )
         except Exception as e:  # a model that doesn't take a temperature: ask again without it
             if not kw or "temperature" not in str(e).lower():
                 raise
-            r = self.client.messages.create(model=model, max_tokens=max_tokens, system=system,
+            r = self.client.messages.create(model=model, max_tokens=max_tokens, system=sys_arg,
                                             messages=[{"role": "user", "content": content}])
         if getattr(r, "stop_reason", None) == "max_tokens":
             log.warning("AI answer cut off at the token limit", extra={"model": model, "max_tokens": max_tokens})
         text = "".join(getattr(b, "text", "") for b in r.content)
-        return text, r.usage.input_tokens, r.usage.output_tokens
+        u = r.usage
+        self.last_cache = (int(getattr(u, "cache_read_input_tokens", 0) or 0), int(getattr(u, "cache_creation_input_tokens", 0) or 0))
+        return text, u.input_tokens, u.output_tokens
 
 
 class FakeBackend(Backend):
@@ -116,10 +127,10 @@ def available() -> bool:
         return False
 
 
-def cost(db: Session, model: str, tin: int, tout: int) -> float:
+def cost(db: Session, model: str, tin: int, tout: int, cache_read: int = 0, cache_write: int = 0) -> float:
     pricing = settings_store.get(db, "model_pricing")
     pin, pout = pricing.get(model, [0.0, 0.0])
-    return round(tin / 1e6 * pin + tout / 1e6 * pout, 6)
+    return round((tin + cache_read * CACHE_READ_FACTOR + cache_write * CACHE_WRITE_FACTOR) / 1e6 * pin + tout / 1e6 * pout, 6)
 
 
 def spent_today(db: Session) -> float:
@@ -173,8 +184,10 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
             text, tin, tout = be.complete(model, system, u, max_tokens if attempt == 0 else max(max_tokens * 2, 1000),
                                           **({"images": images} if images else {}),
                                           **({"temperature": temperature} if temperature is not None else {}))
-            row.response_raw, row.input_tokens, row.output_tokens = text, tin, tout
-            row.cost_usd = cost(db, model, tin, tout)
+            cread, cwrite = getattr(be, "last_cache", (0, 0)) or (0, 0)
+            be.last_cache = (0, 0)
+            row.response_raw, row.input_tokens, row.output_tokens = text, tin + cread + cwrite, tout
+            row.cost_usd = cost(db, model, tin, tout, cread, cwrite)
             row.latency_ms = int((time.monotonic() - t0) * 1000)
             data = extract_json(text) if want_json else None
             db.add(row)
