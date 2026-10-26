@@ -93,7 +93,8 @@ DEFAULTS: dict[str, Any] = {
         # News older than this (by its published time) is skipped: no AI call, no trade.
         "max_age_minutes": 15,
         # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
-        "symbol_dedup_minutes": 60,  # same stock analysed in the last hour: another source's copy, no second AI call
+        "symbol_dedup_minutes": 60,
+        "notify_holdings": True,  # Telegram message when news about a stock you own is analysed  # same stock analysed in the last hour: another source's copy, no second AI call
         "read_images": True,  # read text in Telegram post images with the AI (triage model)
         # candlestick patterns + trendlines shown to the AI for each analysed stock, per timeframe, over this many days
         "pattern_timeframes": ["day", "60minute", "15minute", "5minute", "minute"],

@@ -153,12 +153,13 @@ class FakeLLM:
                        "counterfactual": {}, "proposed_lesson": None, "hindsight_flags": [], "summary": "bad entry"}
         self.judge = {"groundedness": 4, "consistency": 5, "no_hallucination": 4, "unsupported_claims": [], "comment": "ok"}
         self.parser = {"status": "clarify", "question": "?", "reason": "ambiguous"}
-        self.compare = {"top_pick": "INVENTED", "top_pick_reasons": ["ROE 20 with debt/equity 0.2"],
-                        "ranking": [{"symbol": "DEBTCO", "score": 55, "verdict": "neutral", "why": "D/E 2.5 is high"},
-                                    {"symbol": "GOODCO", "score": 140, "verdict": "strong", "why": "ROE 20, P/E 20"},
-                                    {"symbol": "FAKECO", "score": 99, "verdict": "strong", "why": "made up"}],
-                        "risks": ["valuation"], "data_gaps": [], "summary": "GOODCO is strongest."}
+        self.compare = {"adjustments": [{"symbol": "DEBTCO", "points": 25, "reason": "user prefers low debt? no: capped"},
+                                        {"symbol": "FAKECO", "points": 5, "reason": "made up"}],
+                        "why": {"GOODCO": "ROE 20, P/E 20", "FAKECO": "made up"},
+                        "top_pick_reasons": ["ROE 20 with debt/equity 0.2"], "risks": ["valuation"], "data_gaps": [],
+                        "summary": "GOODCO is strongest."}
         self.image_text = "Infosys (INFY) breakout. Buy above 1520, target 1600, stop 1480."
+        self.ask = {"in_scope": True, "answer": "INFY: ROE 20%. **Not investment advice.**"}
         self.prompts: list[str] = []
 
     def __call__(self, model, system, user):
@@ -175,8 +176,10 @@ class FakeLLM:
             return _json.dumps(self.parser)
         if system.startswith("You read images"):
             return self.image_text
-        if system.startswith("You compare a set of NSE"):
+        if system.startswith("You explain a ranking of NSE"):
             return _json.dumps(self.compare)
+        if system.startswith("You are Syena's market assistant"):
+            return _json.dumps(self.ask)
         if system.startswith("You review a proposed manual"):
             return _json.dumps({"verdict": "caution", "issues": [], "suggested": {}, "summary": "ok"})
         return _json.dumps({"text": "pattern"})

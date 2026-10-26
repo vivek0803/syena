@@ -68,7 +68,7 @@ function StockView({ symbol }: { symbol: string }) {
 
   return (
     <Page title={symbol} intro={m ? <span>{m.name ?? ""}{m.sector ? <span className="text-mute"> · {m.sector}</span> : null}</span> : undefined}
-      actions={<Link to="/stock" className="btn-ghost">Another stock</Link>}>
+      actions={<div className="flex gap-2"><Link to={`/ask?q=${encodeURIComponent(`What does the data say about ${symbol} right now?`)}`} className="btn-ghost">Ask AI about {symbol}</Link><Link to="/stock" className="btn-ghost">Another stock</Link></div>}>
       <ErrorNote error={info.error} />
       <div className="space-y-6">
         <Panel pad={false}>

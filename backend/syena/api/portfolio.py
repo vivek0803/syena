@@ -109,3 +109,32 @@ def schemes(db: Session = Depends(get_db)):
         out.append({"name": h.name, "isin": h.isin, "amc": h.amc, "value": h.value,
                     "disclosure_as_of": as_of.isoformat() if as_of else None})
     return out
+
+
+@router.get("/news")
+def my_news(days: int = 14, db: Session = Depends(get_db)):
+    """The AI's latest news verdicts on every stock you own (manual-invest trades + broker/CAS holdings)."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from syena.db import utcnow
+    from syena.models import NewsAnalysis, NewsItem
+    from syena.portfolio.mine import describe, my_stocks
+
+    mine = my_stocks(db)
+    since = utcnow() - timedelta(days=max(1, min(days, 90)))
+    found: dict[str, list] = {}
+    for a in db.scalars(select(NewsAnalysis).where(NewsAnalysis.stage == "analysis", NewsAnalysis.created_at >= since)
+                        .order_by(NewsAnalysis.id.desc()).limit(2000)):
+        for sym in a.symbols or []:
+            if sym in mine and len(found.setdefault(sym, [])) < 3:
+                r, n = a.result or {}, db.get(NewsItem, a.news_item_id)
+                found[sym].append({"ts": a.created_at.isoformat(), "action": r.get("action"), "confidence": r.get("confidence"),
+                                   "event": r.get("event"), "materiality": r.get("materiality"), "summary": a.summary,
+                                   "news": {"title": n.title, "url": n.url, "source": n.source} if n else None})
+    rows = [{"symbol": s, "holding": describe(d), "sources": d["sources"], "news": found.get(s, [])} for s, d in mine.items()]
+    rows.sort(key=lambda r: (not r["news"], r["news"][0]["ts"] if r["news"] else "", r["symbol"]))
+    with_news = [r for r in rows if r["news"]]
+    with_news.sort(key=lambda r: r["news"][0]["ts"], reverse=True)
+    return {"days": days, "holdings": len(rows), "with_news": with_news, "quiet": [r["symbol"] for r in rows if not r["news"]]}

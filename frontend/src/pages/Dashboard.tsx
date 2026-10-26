@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import HoldingNews from "../components/HoldingNews";
 import { Empty, ErrorNote, Loading, Page, Panel, Pill, Stat, Table, decisionLabel, decisionTone } from "../components/ui";
 import { ago, money, signed, tone, when } from "../lib/format";
 import { useApi } from "../lib/hooks";
@@ -41,6 +42,7 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <HoldingNews />
       <Panel title={`Open positions (${d.open_positions.length})`} aside={<Link to="/trades" className="text-sm text-saffron hover:underline">All trades</Link>} pad={false}>
         <Table rows={d.open_positions} rowKey={(r: any) => r.id}
           onRow={(r: any) => r.decision_id && nav(`/decisions/${r.decision_id}`)}

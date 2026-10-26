@@ -350,6 +350,29 @@ def friendly_error(e: Exception) -> str:
     return msg[:300] or type(e).__name__
 
 
+def holding_news_alert(db: Session, symbol: str, a: dict, mine: dict) -> None:
+    """Telegram message when news about something you own has been analysed, whatever Syena decides to trade."""
+    from syena.config import get_settings
+    from syena.notify import telegram
+    from syena.portfolio.mine import describe
+
+    try:
+        icon = {"BUY": "🟢", "SELL": "🔴"}.get(a["action"], "⚪")
+        mood = {"BUY": "positive", "SELL": "negative"}.get(a["action"], "no clear edge")
+        event = (a.get("event") or "").replace("_", " ")
+        lines = [f"📰 <b>News on your holding {telegram.esc(symbol)}</b>", telegram.esc(describe(mine)),
+                 f"{icon} AI: <b>{mood}</b> ({a['action']} {a['confidence']:g}/100){' · ' + telegram.esc(event) if event and event != 'other' else ''}"
+                 + (f" · {telegram.esc(a['materiality'])} impact" if a.get("materiality") else ""),
+                 telegram.esc(a.get("summary") or "")]
+        if a["action"] == "SELL":
+            lines.append("⚠ Consider reviewing this position.")
+        lines.append(f"{get_settings().public_origin}/stock/{symbol}")
+        telegram.notify(db, "holding_news", "\n".join(l for l in lines if l), symbol=symbol)
+    except Exception as e:  # an alert problem must never stop the analysis
+        db.rollback()
+        log.warning("holding news alert failed", extra={"stock": symbol, "error": str(e)})
+
+
 def pre_ai_liquidity(db: Session, symbol: str, md, now: datetime) -> str | None:
     """Market cap / turnover check done BEFORE the AI call. Returns the reason when the stock is too small to trade.
     Unknown values pass (the full check after the analysis still runs)."""
@@ -446,10 +469,24 @@ def process_symbol(db: Session, symbol: str, items: list[NewsItem], md, event_ty
     db.commit()
     _shadow(db, symbol, items, md, now, event_type)
 
+    from syena.portfolio.mine import my_stocks
+
+    mine = my_stocks(db).get(symbol)
+    if mine and settings_store.get(db, "news").get("notify_holdings", True):
+        holding_news_alert(db, symbol, a, mine)
     held = db.scalar(select(Trade).where(Trade.stock == symbol, Trade.status == TradeStatus.OPEN, Trade.side == "BUY"))
     if a["action"] == "SELL" and held:
         events.publish(db, "news_sell_signal", {"symbol": symbol, "signal_id": sig.id, "trade_id": held.id})
         return sig  # you hold it: the position monitor turns this into a SELL alert/exit instead of a short
+    if a["action"] == "SELL" and mine:  # in your broker holdings: never short what you own, tell you instead
+        algo_ = news_algo(db)
+        engine.record_verdict(db, engine.TradeIntent(symbol=symbol, style=Style.INTRADAY, side="SELL", source="news", ref_price=a["price"] or 0.0,
+                                                     algo_id=algo_.id, signal_id=sig.id, confidence=a["confidence"],
+                                                     inputs={"news": [{"id": i.id, "title": i.title} for i in items]},
+                                                     news_item_ids=[i.id for i in items]),
+                              DecisionType.REJECTED, f"REJECTED: you own {symbol} ({', '.join(mine['sources'])}), so no short; you were alerted",
+                              [Check("own_holding", False, f"AI said SELL ({a['confidence']:g}) on a stock in your portfolio: alert sent instead of a short")])
+        return sig
     short = a["action"] == "SELL"
     verdict = Check("ai_verdict", True, f"{a['action']} with confidence {a['confidence']:g}"
                     + (f" (after lessons {conf_after:g})" if conf_after != a["confidence"] else ""))
@@ -539,7 +576,9 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
     _save_health(db)
     fresh = now - max_age(db)
     held = [t.stock for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.OPEN))]
-    extra = list(dict.fromkeys(cfg["watchlist"] + held))
+    from syena.portfolio.mine import my_stocks
+
+    extra = list(dict.fromkeys(cfg["watchlist"] + held + list(my_stocks(db))))  # news on what you own is always looked at
     stats = {"fetched": len(new), "duplicates": sum(i.status == "DUPLICATE" for i in new), "stale": 0, "images_read": 0,
              "triaged": 0, "relevant": 0, "signals": 0, "symbol_duplicates": 0, "errors": 0}
 

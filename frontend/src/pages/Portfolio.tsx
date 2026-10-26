@@ -1,5 +1,6 @@
 import { FormEvent, Fragment, useState } from "react";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import HoldingNews from "../components/HoldingNews";
 import { Empty, ErrorNote, Field, Loading, Modal, Page, Panel, Pill, Stat, Table, Tabs, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { ago, money, pct, signed, tone } from "../lib/format";
@@ -53,6 +54,7 @@ export default function Portfolio() {
     return (
       <Page title="Portfolio X-Ray" intro="Zerodha, Angel One and your mutual funds in one place, including the stocks hidden inside your funds.">
         {sources}
+        <HoldingNews />
         <Empty title="Nothing loaded yet">Start with Zerodha (needs today's login), then upload your CAMS / KFintech CAS PDF. Ask for a detailed CAS at camsonline.com or mfcentral.com; it arrives by email, protected with a password you choose.</Empty>
         <ConnectModals which={connect} onClose={() => setConnect("")} toast={toast.show} />
         {toast.node}
@@ -65,6 +67,7 @@ export default function Portfolio() {
 
   return (
     <Page title="Portfolio X-Ray" intro="Zerodha, Angel One and your mutual funds in one place, including the stocks hidden inside your funds.">
+      <HoldingNews />
       <div className="grid gap-4 md:grid-cols-[1.1fr_1fr_1fr]">
         <div className="panel p-4">
           <Stat label="Total value" value={money(p.total_value, false)} sub={`Top 10 stocks (look-through) are ${pct(p.top10_pct)} of everything`} />

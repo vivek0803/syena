@@ -34,16 +34,19 @@ def test_partial_refresh_does_not_hide_other_stocks_from_screens(loaded):  # noq
     assert compare.metrics(loaded, ["GOODCO"])[0]["price"] == 1100  # but Compare shows the newest price
 
 
-def test_ai_pick_sanitised(loaded, fake_llm):  # noqa: F811
+def test_ai_pick_is_formula_ranked_and_adjustments_capped(loaded, fake_llm):  # noqa: F811
     wl = Watchlist(name="w", symbols=["GOODCO", "DEBTCO"])
     loaded.add(wl)
     loaded.commit()
     md = FakeMD({})
     out = compare.ai_compare(loaded, wl, md, "LONG_TERM", "prefer low debt")
-    assert out["top_pick"] == "DEBTCO"  # invented ticker replaced by the first ranked real one
-    assert [r["symbol"] for r in out["ranking"]] == ["DEBTCO", "GOODCO"] and out["ranking"][1]["score"] == 100
-    assert "ret_1y" in fake_llm.prompts[-1] and "<untrusted" in fake_llm.prompts[-1]
-    assert loaded.get(Watchlist, wl.id).ai_result["top_pick"] == "DEBTCO"
+    good, debt = {r["symbol"]: r for r in out["ranking"]}["GOODCO"], {r["symbol"]: r for r in out["ranking"]}["DEBTCO"]
+    assert good["formula_score"] > debt["formula_score"]          # better ROE, margins, lower debt
+    assert debt["adjustment"]["points"] == 10                     # the AI asked for +25: capped at 10
+    assert "FAKECO" not in {r["symbol"] for r in out["ranking"]}  # invented tickers ignored
+    assert out["top_pick"] == out["ranking"][0]["symbol"] and good["why"] == "ROE 20, P/E 20"
+    assert debt["why"].startswith("Within this list")             # no AI text for it: the formula's own sentence
+    assert "formula_score" in fake_llm.prompts[-1] and "<untrusted" in fake_llm.prompts[-1]
     with pytest.raises(ValueError):
         compare.ai_compare(loaded, Watchlist(name="x", symbols=["GOODCO"]), md)
 
@@ -59,28 +62,20 @@ def test_compare_api(authed, loaded, fake_llm):  # noqa: F811
     assert authed.delete(f"/api/compare/lists/{wl['id']}").json() == {"deleted": True}
 
 
-def test_ai_rounds_for_big_lists(db, fake_llm, monkeypatch):
+def test_big_lists_are_ranked_in_one_go(db, fake_llm, monkeypatch):
     from syena.models import Stock
 
     syms = [f"S{i:03d}" for i in range(90)]
-    for s in syms:
-        db.add(Stock(symbol=s, active=True, roe=float(int(s[1:]))))
+    for s_ in syms:
+        db.add(Stock(symbol=s_, active=True, roe=float(int(s_[1:]))))
     db.commit()
-    calls = []
-    def fake_ask(db_, table, horizon, note):
-        calls.append([t["symbol"] for t in table])
-        ranked = sorted(table, key=lambda t: -(t.get("roe") or 0))  # "AI" prefers high ROE
-        return compare._clean({"top_pick": ranked[0]["symbol"], "ranking": [
-            {"symbol": t["symbol"], "score": int(t["roe"]), "verdict": "good", "why": "roe"} for t in ranked]},
-            [t["symbol"] for t in table]), "fake"
-    monkeypatch.setattr(compare, "_ask", fake_ask)
     wl = Watchlist(name="big", symbols=syms)
     db.add(wl)
     db.commit()
     out = compare.ai_compare(db, wl, None)
-    assert [len(c) for c in calls] == [40, 40, 10, 15]  # three groups, then a final of 3 x 5 winners
-    assert out["top_pick"] == "S089" and out["rounds"] == 4
-    assert len(out["ranking"]) == 90 and out["ranking"][0]["round"] == "final" and out["ranking"][-1]["round"] == "group"
+    assert out["top_pick"] == "S089" and out["rounds"] == 1 and len(out["ranking"]) == 90
+    assert out["ranking"][-1]["symbol"] == "S000"
+    assert fake_llm.prompts[-1].count('"symbol"') == compare.AI_EXPLAIN  # only the top ones go to the AI in full
 
 
 def test_opening_big_list_fetches_only_a_few(loaded, monkeypatch):  # noqa: F811
@@ -102,16 +97,27 @@ def test_same_data_gives_same_answer_and_is_deterministic(loaded, fake_llm, monk
     real = llm.FakeBackend.complete
 
     def spy(self, model, system, user, max_tokens, images=None, temperature=None):
-        temps.append((temperature, max_tokens))
+        temps.append(temperature)
         return real(self, model, system, user, max_tokens, images)
     monkeypatch.setattr(llm.FakeBackend, "complete", spy)
     wl = Watchlist(name="w", symbols=["GOODCO", "DEBTCO"])
     loaded.add(wl)
     loaded.commit()
     first = compare.ai_compare(loaded, wl, None)
-    assert temps == [(0, 1200 + 160 * 2)] and "reused" not in first
-    fake_llm.compare = {**fake_llm.compare, "top_pick": "GOODCO"}  # the AI would now say something else...
+    assert temps == [0] and "reused" not in first
     again = compare.ai_compare(loaded, wl, None)
-    assert again["reused"] and again["top_pick"] == first["top_pick"] and len(temps) == 1  # ...but nothing changed: same answer
-    assert compare.ai_compare(loaded, wl, None, note="prefer low debt")["top_pick"] == "GOODCO" and len(temps) == 2
-    assert "DEBTCO" in fake_llm.prompts[-1].split("GOODCO")[0]  # stocks always sent in a fixed (alphabetical) order
+    assert again["reused"] and again["ranking"] == first["ranking"] and len(temps) == 1
+
+
+def test_formula_scoring_rules():
+    from syena.screener import scoring
+
+    rows = [{"symbol": "A", "roe": 25, "pe": 15, "sales_growth": 20, "debt_to_equity": 0.1},
+            {"symbol": "B", "roe": 10, "pe": -5, "sales_growth": 5, "debt_to_equity": 2.0},
+            {"symbol": "BANK", "sector": "Financial Services", "industry": "Banks", "roe": 15, "pe": 12, "debt_to_equity": 9.0}]
+    sc = scoring.score(rows, "LONG_TERM")
+    assert sc["A"]["score"] > sc["BANK"]["score"] > sc["B"]["score"]
+    assert sc["BANK"]["breakdown"]["balance_sheet"] is None        # a bank's debt/equity isn't held against it
+    assert scoring.score(rows, "LONG_TERM") == sc                  # same data, same scores
+    swing = scoring.score([{"symbol": "UP", "ret_3m": 20, "rsi14": 62}, {"symbol": "DOWN", "ret_3m": -10, "rsi14": 85}], "SWING")
+    assert swing["UP"]["score"] > swing["DOWN"]["score"]

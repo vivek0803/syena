@@ -150,12 +150,12 @@ function AiPanel({ id, list }: { id: number; list: any }) {
           <option value="LONG_TERM">Long-term investing</option><option value="SWING">Swing trade (days–weeks)</option></select></Field>
         <div className="min-w-[220px] flex-1"><Field label="Anything to favour? (optional)">
           <input className="input" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. low debt, steady dividends" /></Field></div>
-        <button className="btn-primary" disabled={ask.isPending}>{ask.isPending ? (list.symbols.length > 40 ? `Comparing in ${Math.ceil(list.symbols.length / 40) + 1} rounds…` : "Comparing…") : r ? "Ask again" : "Ask AI for the best pick"}</button>
+        <button className="btn-primary" disabled={ask.isPending}>{ask.isPending ? "Comparing…" : r ? "Ask again" : "Rank them and pick the best"}</button>
       </form>
       <ErrorNote error={ask.error} />
       {r && r.top_pick && (
         <div className="mt-5 space-y-4">
-          {r.rounds > 1 && <p className="text-sm text-parch-dim">{r.stocks.length} stocks were compared in groups of 40; the best 5 of each group met in a final ({r.finalists?.length} finalists). Stocks marked “group round” were judged against their group only.</p>}
+          {r.rubric && <p className="text-[13px] text-mute">How it's scored: each figure is ranked against the other stocks in this list (best = 100), then weighted: {Object.entries(r.rubric).map(([k, w]) => `${k.replace(/_/g, " ")} ${w}%`).join(" · ")}. The AI can move a score by at most 10 points, and says why.</p>}
           {ask.data?.reused && <p className="text-sm text-parch-dim">Nothing changed since the last answer (same stocks, figures, horizon and preference), so this is that answer. It updates when prices or company figures change.</p>}
           {changed && <p className="text-sm text-saffron">The list changed since this answer: ask again to include the new stocks.</p>}
           <div className="rounded-panel border border-saffron/40 bg-saffron-soft p-4">
@@ -171,13 +171,15 @@ function AiPanel({ id, list }: { id: number; list: any }) {
                 <span className="w-5 shrink-0 text-mute">{i + 1}.</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <b>{x.symbol}</b>{x.round === "group" && <span className="text-[12px] text-mute">group round</span>}
+                    <b>{x.symbol}</b>
                     <Pill tone={x.verdict === "strong" ? "gain" : x.verdict === "weak" ? "loss" : x.verdict === "good" ? "info" : "mute"}>{x.verdict}</Pill>
                     <span className="flex items-center gap-2" aria-label={`score ${x.score ?? "unknown"} of 100`}>
                       <span className="h-1.5 w-20 overflow-hidden rounded-full bg-dusk-line"><span className="block h-full rounded-full bg-saffron" style={{ width: `${x.score ?? 0}%` }} /></span>
                       <span className="text-mute">{x.score ?? "–"}</span></span>
                   </div>
                   <p className="mt-0.5 text-parch-dim">{x.why}</p>
+                  {x.breakdown && <p className="mt-0.5 text-[12px] text-mute">{Object.entries(x.breakdown).map(([k, v]: [string, any]) => `${k.replace(/_/g, " ")} ${v == null ? "?" : Math.round(v)}`).join(" · ")}{x.coverage != null && x.coverage < 100 ? ` · ${x.coverage}% of figures known` : ""}</p>}
+                  {x.adjustment && <p className="mt-0.5 text-[12px] text-saffron">AI adjusted {x.adjustment.points > 0 ? "+" : ""}{x.adjustment.points} from formula score {x.formula_score}: {x.adjustment.reason}</p>}
                 </div>
               </li>))}</ol>
           </div>

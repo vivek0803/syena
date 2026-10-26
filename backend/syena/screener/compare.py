@@ -160,62 +160,68 @@ def _table(db: Session, syms: list[str], tech: dict) -> list[dict]:
     return table
 
 
-def _ask(db: Session, table: list[dict], horizon: str, note: str | None) -> tuple[dict, str]:
+AI_EXPLAIN = 12  # the AI writes about the top stocks; the rest get a sentence from the formula
+
+
+def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str | None) -> tuple[dict, str]:
     from syena.ai import llm
     from syena.ai.prompts import untrusted
 
     keep = [f for f in FIELDS if f not in ("volume", "high_52w", "low_52w", "book_value", "dividend_ps")]
-    res = llm.call(db, "stock_compare", "stock_compare", tier="analysis", max_tokens=min(8000, 1200 + 160 * len(table)),
-                   temperature=0, variables={
+    top = [dict(t, formula_score=scores[t["symbol"]]["score"], breakdown=scores[t["symbol"]]["breakdown"]) for t in table[:AI_EXPLAIN]]
+    others = [f"{t['symbol']}: {scores[t['symbol']]['score']}" for t in table[AI_EXPLAIN:]]
+    res = llm.call(db, "stock_compare", "stock_compare", tier="analysis", max_tokens=1500 + 120 * len(top), temperature=0,
+                   variables={
         "horizon": HORIZONS.get(horizon, HORIZONS["LONG_TERM"]),
         "fields": json.dumps({**{f: FIELDS[f][2] for f in keep}, **TECH_FIELDS}),
-        "stocks": json.dumps(table, ensure_ascii=False),
+        "stocks": json.dumps(top, ensure_ascii=False),
+        "others": ", ".join(others) or "(none)",
         "note": untrusted(note.strip()[:500], "user_preference") if note and note.strip() else "(none)",
     })
-    return _clean(res.data or {}, [t["symbol"] for t in table]), res.model
+    return res.data or {}, res.model
 
 
 def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", note: str | None = None) -> dict:
-    """Any number of stocks: up to AI_GROUP in one comparison; more go in rounds. Each group's best
-    AI_FINALISTS meet in a final that decides the top pick; the others keep their group-round verdicts."""
+    """Rank any number of stocks with the fixed formula (screener/scoring.py), then let the AI explain the top ones
+    and nudge a score by up to 10 points where the formula can't see something. Same inputs, same answer."""
+    from syena.screener import scoring
+
     syms = list(wl.symbols or [])
     if len(syms) < 2:
         raise ValueError("Add at least two stocks to compare.")
     tech = technicals(md, syms, db, live_fetch=LIVE_FETCH) if md is not None else {}
     table = {t["symbol"]: t for t in _table(db, syms, tech)}
-    # Same stocks, same figures, same horizon and preference -> the same answer as last time (no re-roll).
     key = _input_key(table, horizon, note)
     prev = wl.ai_result or {}
     if prev.get("input_key") == key and prev.get("top_pick"):
         return {**prev, "reused": True}
-    syms = sorted(syms)  # a fixed order, so the list order never sways the comparison
-    if len(syms) <= AI_GROUP:
-        out, model = _ask(db, [table[s] for s in syms], horizon, note)
-        rounds = 1
-    else:
-        groups = [syms[i:i + AI_GROUP] for i in range(0, len(syms), AI_GROUP)]
-        early: dict[str, dict] = {}
-        finalists: list[str] = []
-        for g in groups:
-            res, model = _ask(db, [table[s] for s in g], horizon, note)
-            ranked = [r["symbol"] for r in res["ranking"]] + [s for s in g if s not in {r["symbol"] for r in res["ranking"]}]
-            finalists += ranked[:AI_FINALISTS]
-            for r in res["ranking"]:
-                early[r["symbol"]] = dict(r, round="group")
-        while len(finalists) > AI_GROUP:  # very large lists: keep halving until the final fits
-            nxt = []
-            for i in range(0, len(finalists), AI_GROUP):
-                res, model = _ask(db, [table[s] for s in finalists[i:i + AI_GROUP]], horizon, note)
-                nxt += [r["symbol"] for r in res["ranking"]][:AI_FINALISTS]
-            finalists = nxt
-        out, model = _ask(db, [table[s] for s in finalists], horizon, note)
-        final = {r["symbol"] for r in out["ranking"]}
-        rest = sorted((r for s, r in early.items() if s not in final), key=lambda r: -(r["score"] or 0))
-        out["ranking"] = [dict(r, round="final") for r in out["ranking"]] + rest
-        out["finalists"] = finalists
-        rounds = len(groups) + 1
-    out.update({"horizon": horizon, "model": model, "stocks": list(wl.symbols or []), "note": note or None, "rounds": rounds,
-                "input_key": key})
+    scores = scoring.score(list(table.values()), horizon)
+    order = sorted(table, key=lambda s: (-scores[s]["score"], s))
+    ai, model = _ask(db, [table[s] for s in order], scores, horizon, note)
+    adj = {}
+    for a in ai.get("adjustments") or []:
+        sym = str(a.get("symbol", "")).upper()
+        try:
+            pts = max(-10.0, min(10.0, float(a.get("points") or 0)))
+        except (TypeError, ValueError):
+            continue
+        if sym in table and pts:
+            adj[sym] = {"points": pts, "reason": str(a.get("reason") or "")[:300]}
+    why = {str(k).upper(): str(v)[:400] for k, v in (ai.get("why") or {}).items()} if isinstance(ai.get("why"), dict) else {}
+    ranking = []
+    for s in order:
+        sc = scores[s]
+        final = round(max(0.0, min(100.0, sc["score"] + adj.get(s, {}).get("points", 0))), 1)
+        ranking.append({"symbol": s, "score": round(final), "formula_score": sc["score"], "adjustment": adj.get(s),
+                        "verdict": scoring.verdict(final), "breakdown": sc["breakdown"], "coverage": sc["coverage"],
+                        "why": why.get(s) or scoring.explain(s, sc)})
+    ranking.sort(key=lambda r: (-r["score"], -r["formula_score"], r["symbol"]))
+    lst = lambda k: [str(x)[:300] for x in (ai.get(k) or [])][:6]  # noqa: E731
+    out = {"top_pick": ranking[0]["symbol"], "ranking": ranking, "top_pick_reasons": lst("top_pick_reasons"),
+           "risks": lst("risks"), "data_gaps": lst("data_gaps"), "summary": str(ai.get("summary") or "")[:800],
+           "method": "fixed formula + AI review (max ±10 points)", "rubric": {k: w for k, (w, _) in scoring.RUBRICS[horizon if horizon in scoring.RUBRICS else "LONG_TERM"].items()},
+           "horizon": horizon, "model": model, "stocks": list(wl.symbols or []), "note": note or None, "rounds": 1,
+           "input_key": key}
     wl.ai_result, wl.ai_at = out, utcnow()
     db.commit()
     return out
@@ -225,7 +231,7 @@ def _input_key(table: dict, horizon: str, note: str | None) -> str:
     import hashlib
 
     rows = [{k: v for k, v in table[s].items() if k != "missing"} for s in sorted(table)]
-    blob = json.dumps({"rows": rows, "horizon": horizon, "note": (note or "").strip().lower(), "prompt": "stock_compare/v2"},
+    blob = json.dumps({"rows": rows, "horizon": horizon, "note": (note or "").strip().lower(), "prompt": "stock_compare/v3"},
                       sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:24]
 

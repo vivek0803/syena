@@ -95,9 +95,16 @@ def test_cross_origin_rejected(authed, client, clock):
     assert do_login(client, clock, headers={"Origin": "https://evil.example"}).status_code == 403
 
 
-def test_idle_timeout(authed, db):
+def test_stays_signed_in_for_a_day(authed, db):
     s = db.scalar(select(UserSession))
-    s.last_seen_at = utcnow() - timedelta(minutes=31)
+    s.last_seen_at = s.created_at = utcnow() - timedelta(hours=23)
+    db.commit()
+    assert authed.get("/api/auth/me").status_code == 200   # no login again within 24 hours
+
+
+def test_session_ends_after_24_hours(authed, db):
+    s = db.scalar(select(UserSession))
+    s.created_at = utcnow() - timedelta(hours=24, minutes=1)
     db.commit()
     assert authed.get("/api/auth/me").status_code == 401
 

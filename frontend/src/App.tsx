@@ -16,6 +16,7 @@ import Orders from "./pages/Orders";
 import Portfolio from "./pages/Portfolio";
 import Screener from "./pages/Screener";
 import Compare from "./pages/Compare";
+import Ask from "./pages/Ask";
 import Stock from "./pages/Stock";
 import SettingsPage from "./pages/Settings";
 import Trades from "./pages/Trades";
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="/compare/:id" element={<Compare />} />
         <Route path="/stock" element={<Stock />} />
         <Route path="/stock/:symbol" element={<Stock />} />
+        <Route path="/ask" element={<Ask />} />
         <Route path="/evals" element={<Evals />} />
         <Route path="/learning" element={<Learning />} />
         <Route path="/logs" element={<Logs />} />

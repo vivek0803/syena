@@ -34,8 +34,9 @@ class Settings(BaseSettings):
 
     # Session cookie
     cookie_secure: bool = True
-    session_idle_minutes: int = 30
-    session_absolute_hours: int = 12
+    # Stay signed in for 24 hours (Oct 2026: asked for). Going LIVE still asks for password + 2FA again.
+    session_idle_minutes: int = 24 * 60
+    session_absolute_hours: int = 24
 
     # Login protection
     login_max_failures: int = 5
