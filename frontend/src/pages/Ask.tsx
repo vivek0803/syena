@@ -47,7 +47,7 @@ export default function Ask() {
   };
 
   return (
-    <Page title="Ask AI" intro="Questions about stocks, the market and your portfolio, answered with Syena's own data: company figures, charts, news verdicts and your holdings. Market questions only."
+    <Page title="Syena AI" intro="Questions about stocks, the market and your portfolio, answered with Syena's own data: company figures, charts, news verdicts and your holdings. Market questions only."
       actions={msgs.length > 0 ? <button className="btn-ghost" onClick={() => setMsgs([])}>New chat</button> : undefined}>
       <div className="mx-auto max-w-3xl space-y-4">
         {!msgs.length && (

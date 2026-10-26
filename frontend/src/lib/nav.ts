@@ -16,7 +16,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   ["Trade", [["/algos", "Algo builder", Workflow], ["/pattern-lab", "Pattern lab", FlaskConical], ["/invest", "Manual invest", HandCoins],
     ["/screener", "Screener", ListFilter], ["/compare", "Compare stocks", Scale], ["/stock", "Stock charts", CandlestickChart],
     ["/trades", "Trades & positions", Briefcase], ["/orders", "Orders", ReceiptText]]],
-  ["Understand", [["/ask", "Ask AI", MessagesSquare], ["/news", "News feed", Newspaper], ["/review", "Daily review", CalendarSearch],
+  ["Understand", [["/ask", "Syena AI", MessagesSquare], ["/news", "News feed", Newspaper], ["/review", "Daily review", CalendarSearch],
     ["/portfolio", "Portfolio X-Ray", PieChart], ["/evals", "Evals", Gauge], ["/learning", "Learning", GraduationCap]]],
   ["System", [["/logs", "Logs", SquareTerminal], ["/settings", "Settings", Settings]]],
 ].map(([group, items]: any) => ({ group, items: items.map(([to, label, icon]: any) => ({ to, label, icon, group })) }));
