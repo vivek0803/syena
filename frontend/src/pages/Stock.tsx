@@ -14,7 +14,7 @@ const CANDLES: [string, string, string][] = [["minute", "1m", "1M"], ["5minute",
 const AUTO: Record<string, string> = { "1D": "5minute", "5D": "15minute", "1M": "60minute", "3M": "day", "6M": "day", "1Y": "day", "3Y": "day", "5Y": "day" };
 const fits = (iv: string, range: string) => RANGES.indexOf(range) <= RANGES.indexOf(CANDLES.find((c) => c[0] === iv)![2]);
 const IST = 19800; // chart axis in Indian time
-const C = { up: "#56B488", down: "#E36B5D", grid: "#232a3a", text: "#8B93A7", line: "#2F384C", bg: "#1B2130" };
+const C = { up: "#3FC48A", down: "#F2685A", grid: "#1F283B", text: "#858DA3", line: "#283350", bg: "#151D2E" };
 // Overlay lines: validated categorical slots (blue, yellow, violet) - distinct from the green/red candles.
 const LINES: Record<string, { label: string; color: string }> = {
   sma20: { label: "20-day avg", color: "#3987e5" }, sma50: { label: "50-day avg", color: "#c98500" }, sma200: { label: "200-day avg", color: "#9085e9" },
@@ -267,7 +267,7 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
       const a = t.created_at && t.entry_price ? snap(t.created_at) : null;
       if (a != null) out.push({ time: shift(a), position: short ? "aboveBar" : "belowBar", color: short ? C.down : C.up, shape: short ? "arrowDown" : "arrowUp", text: short ? "Short" : "Buy" });
       const b = t.closed_at && t.exit_price_executed ? snap(t.closed_at) : null;
-      if (b != null) out.push({ time: shift(b), position: short ? "belowBar" : "aboveBar", color: "#ECE6D8", shape: "circle", text: short ? "Cover" : "Sell" });
+      if (b != null) out.push({ time: shift(b), position: short ? "belowBar" : "aboveBar", color: "#EEE8DB", shape: "circle", text: short ? "Cover" : "Sell" });
     }
     if (on.structure) {
       for (const sw of data.levels?.swings ?? []) {
@@ -311,13 +311,13 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
     const lineSeries: Record<string, ISeriesApi<"Line">> = {};
     for (const [k, pts] of Object.entries<any[]>(data.lines ?? {})) {
       if (!on[k]) continue;
-      const s = ch.addLineSeries({ color: LINES[k]?.color ?? "#ECE6D8", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      const s = ch.addLineSeries({ color: LINES[k]?.color ?? "#EEE8DB", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
       s.setData(pts.map((p) => ({ time: shift(p.t), value: p.v })));
       lineSeries[k] = s;
     }
     if (on.trendlines) {
       for (const tl of data.trendlines ?? []) {
-        const s = ch.addLineSeries({ color: tl.kind === "support" ? "#56B488" : "#E36B5D", lineWidth: 1, lineStyle: LineStyle.Dashed,
+        const s = ch.addLineSeries({ color: tl.kind === "support" ? "#3FC48A" : "#F2685A", lineWidth: 1, lineStyle: LineStyle.Dashed,
           lastValueVisible: true, priceLineVisible: false, crosshairMarkerVisible: false, title: tl.kind === "support" ? "support" : "resistance" });
         const pts = tl.points.map((p: any) => ({ time: shift(p.t), value: p.v })).filter((p: any, i: number, a: any[]) => i === 0 || p.time > a[i - 1].time);
         s.setData(pts);

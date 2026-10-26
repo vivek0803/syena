@@ -2,11 +2,11 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 
 export function Page({ title, intro, actions, children }: { title: string; intro?: ReactNode; actions?: ReactNode; children: ReactNode }) {
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-4 pb-16 pt-6 md:px-8">
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto w-full max-w-[1360px] px-4 pb-20 pt-7 md:px-8">
+      <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
         <div className="max-w-2xl">
           <h1 className="h1">{title}</h1>
-          {intro && <p className="mt-1 text-parch-dim">{intro}</p>}
+          {intro && <p className="mt-1.5 text-[15px] leading-relaxed text-parch-dim">{intro}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </header>
@@ -15,16 +15,16 @@ export function Page({ title, intro, actions, children }: { title: string; intro
   );
 }
 
-export function Panel({ title, aside, children, className = "", pad = true }: { title?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string; pad?: boolean }) {
+export function Panel({ title, aside, children, className = "", pad = true, icon }: { title?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string; pad?: boolean; icon?: ReactNode }) {
   return (
     <section className={`panel ${className}`}>
       {(title || aside) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dusk-line px-4 py-3">
-          {title && <h2 className="h2">{title}</h2>}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-3 pt-4">
+          {title && <h2 className="h2 flex items-center gap-2">{icon && <span className="text-saffron" aria-hidden>{icon}</span>}{title}</h2>}
           {aside}
         </div>
       )}
-      <div className={pad ? "p-4" : ""}>{children}</div>
+      <div className={pad ? (title || aside ? "px-5 pb-5" : "p-5") : ""}>{children}</div>
     </section>
   );
 }
@@ -32,20 +32,25 @@ export function Panel({ title, aside, children, className = "", pad = true }: { 
 export function ModeBadge({ mode, halted }: { mode: string; halted?: boolean }) {
   const live = mode === "LIVE";
   return (
-    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold ${live ? "bg-loss text-dusk" : "bg-gain/20 text-gain ring-1 ring-gain/50"}`}
+    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[13px] font-bold tracking-wide ${live ? "bg-loss text-dusk-deep shadow-[0_0_0_4px_rgba(242,104,90,0.18)]" : "bg-gain-soft text-gain ring-1 ring-gain/40"}`}
       aria-label={`Trading mode ${mode}${halted ? ", halted" : ""}`}>
-      <span className={`h-2 w-2 rounded-full ${live ? "bg-dusk animate-pulse" : "bg-gain"}`} />
-      {live ? "LIVE" : "PAPER"}{halted ? ", halted" : ""}
+      <span className={`h-2 w-2 rounded-full ${live ? "bg-dusk-deep animate-pulse" : "bg-gain"}`} />
+      {live ? "LIVE" : "PAPER"}{halted ? " (halted)" : ""}
     </span>
   );
 }
 
 const pillTones: Record<string, string> = {
-  gain: "bg-gain-soft text-gain", loss: "bg-loss-soft text-loss", warn: "bg-saffron-soft text-saffron",
-  info: "bg-sky/15 text-sky", mute: "bg-dusk-raised text-parch-dim",
+  gain: "bg-gain-soft text-gain ring-gain/25", loss: "bg-loss-soft text-loss ring-loss/25", warn: "bg-saffron-soft text-saffron ring-saffron/25",
+  info: "bg-sky-soft text-sky ring-sky/25", mute: "bg-dusk-raised text-parch-dim ring-dusk-line",
 };
-export function Pill({ tone = "mute", children }: { tone?: keyof typeof pillTones | string; children: ReactNode }) {
-  return <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[13px] font-medium ${pillTones[tone] ?? pillTones.mute}`}>{children}</span>;
+const pillDots: Record<string, string> = { gain: "bg-gain", loss: "bg-loss", warn: "bg-saffron", info: "bg-sky", mute: "bg-mute" };
+export function Pill({ tone = "mute", children, dot = true }: { tone?: keyof typeof pillTones | string; children: ReactNode; dot?: boolean }) {
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-medium ring-1 ring-inset ${pillTones[tone] ?? pillTones.mute}`}>
+      {dot && <span className={`h-1.5 w-1.5 rounded-full ${pillDots[tone] ?? pillDots.mute}`} aria-hidden />}{children}
+    </span>
+  );
 }
 
 /** Simple outcome of a decision: buy, sell (short), rejected, error; plus exited / skipped / held for exits. */
@@ -63,17 +68,17 @@ export const decisionTone = (t?: string, side?: string | null) =>
 export function Stat({ label, value, sub, valueClass = "" }: { label: string; value: ReactNode; sub?: ReactNode; valueClass?: string }) {
   return (
     <div>
-      <div className="text-sm text-mute">{label}</div>
-      <div className={`font-display text-2xl font-semibold ${valueClass}`}>{value}</div>
-      {sub && <div className="text-sm text-parch-dim">{sub}</div>}
+      <div className="text-[13px] text-mute">{label}</div>
+      <div className={`num mt-0.5 text-[26px] font-semibold leading-tight ${valueClass}`}>{value}</div>
+      {sub && <div className="mt-0.5 text-[13px] text-parch-dim">{sub}</div>}
     </div>
   );
 }
 
 export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-dusk-line p-6">
-      <div className="font-semibold">{title}</div>
+    <div className="flex flex-col items-start gap-2 rounded-xl border border-dashed border-dusk-line bg-dusk-deep/30 p-6">
+      <div className="font-display text-[16px] font-semibold">{title}</div>
       {children && <div className="max-w-xl text-parch-dim">{children}</div>}
       {action}
     </div>
@@ -82,11 +87,26 @@ export function Empty({ title, children, action }: { title: string; children?: R
 
 export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;
-  return <div role="alert" className="rounded-lg border border-loss/40 bg-loss-soft px-3 py-2 text-sm text-loss">{(error as Error).message ?? String(error)}</div>;
+  return <div role="alert" className="rounded-xl border border-loss/40 bg-loss-soft px-3.5 py-2.5 text-sm text-loss">{(error as Error).message ?? String(error)}</div>;
 }
 
 export function Loading({ what = "Loading" }: { what?: string }) {
-  return <div className="py-6 text-parch-dim" aria-live="polite">{what}…</div>;
+  return (
+    <div className="space-y-2.5 py-4" aria-live="polite" aria-label={what}>
+      {[92, 76, 84].map((w, i) => <div key={i} className="h-3 animate-pulse rounded-full bg-dusk-raised/80" style={{ width: `${w}%` }} />)}
+      <span className="sr-only">{what}…</span>
+    </div>
+  );
+}
+
+/** A thin horizontal bar of coloured parts (e.g. today's decisions by outcome). */
+export function SegmentBar({ parts, label }: { parts: { value: number; className: string; name: string }[]; label: string }) {
+  const total = parts.reduce((a, p) => a + p.value, 0);
+  return (
+    <div role="img" aria-label={`${label}: ${parts.map((p) => `${p.value} ${p.name}`).join(", ")}`} className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-dusk-deep">
+      {total > 0 && parts.filter((p) => p.value > 0).map((p) => <span key={p.name} className={`h-full ${p.className}`} style={{ width: `${(p.value / total) * 100}%` }} />)}
+    </div>
+  );
 }
 
 export type Col<T> = { key: string; label: ReactNode; render?: (r: T) => ReactNode; align?: "right" | "left"; className?: string };
@@ -101,7 +121,7 @@ export function Table<T>({ cols, rows, onRow, empty, rowKey }: { cols: Col<T>[];
           {rows.map((r, i) => (
             <tr key={rowKey ? rowKey(r, i) : i} onClick={onRow ? () => onRow(r) : undefined}
               onKeyDown={onRow ? (e) => { if (e.key === "Enter") onRow(r); } : undefined} tabIndex={onRow ? 0 : undefined}
-              className={onRow ? "cursor-pointer hover:bg-dusk-raised/60" : ""}>
+              className={`transition-colors ${onRow ? "cursor-pointer hover:bg-dusk-raised/50" : "hover:bg-dusk-raised/25"}`}>
               {cols.map((c) => (
                 <td key={c.key} className={`td ${c.align === "right" ? "text-right" : ""} ${c.className ?? ""}`}>
                   {c.render ? c.render(r) : String((r as any)[c.key] ?? "–")}

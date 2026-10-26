@@ -7,7 +7,7 @@ import { ago, money, pct, signed, tone } from "../lib/format";
 import { useAct, useApi } from "../lib/hooks";
 
 const sourceName: Record<string, string> = { zerodha: "Zerodha", angel: "Angel One", cas: "Mutual funds (CAS)" };
-const sliceColors = ["#E8A33D", "#7FA8D8", "#56B488", "#C58BD6", "#E36B5D", "#B9B3A6"];
+const sliceColors = ["#F2A93B", "#7FA8D8", "#3FC48A", "#C58BD6", "#F2685A", "#B9B3A6"];
 
 export default function Portfolio() {
   const { data: p, error, isLoading } = useApi<any>("/api/portfolio");
@@ -174,8 +174,8 @@ export default function Portfolio() {
               <BarChart data={p.sectors} layout="vertical" margin={{ left: 12, right: 24 }}>
                 <XAxis type="number" stroke="#8B93A7" fontSize={12} tickFormatter={(v) => `${v}%`} />
                 <YAxis type="category" dataKey="sector" stroke="#8B93A7" fontSize={12} width={170} />
-                <Tooltip contentStyle={{ background: "#1B2130", border: "1px solid #2F384C", borderRadius: 8 }} formatter={(v: number) => [`${v.toFixed(2)}%`, "Share"]} />
-                <Bar dataKey="pct" fill="#E8A33D" radius={[0, 4, 4, 0]} />
+                <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} formatter={(v: number) => [`${v.toFixed(2)}%`, "Share"]} />
+                <Bar dataKey="pct" fill="#F2A93B" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

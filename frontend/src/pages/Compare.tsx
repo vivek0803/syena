@@ -8,7 +8,7 @@ import { api } from "../lib/api";
 import { day, when } from "../lib/format";
 import { useAct, useApi } from "../lib/hooks";
 
-// Categorical palette validated for Syena's dark surface (#1B2130): fixed order, colour follows the stock.
+// Categorical palette validated for Syena's dark surface (#151D2E): fixed order, colour follows the stock.
 const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
 const MAX_CHART = 8;
 
@@ -224,10 +224,10 @@ function Performance({ rows, color, loading, error }: { rows: any[]; color: (s: 
         <div className="h-72" aria-label="Indexed price performance chart">
           <ResponsiveContainer>
             <LineChart data={data} margin={{ left: 4, right: 12, top: 8 }}>
-              <CartesianGrid stroke="#2F384C" vertical={false} />
+              <CartesianGrid stroke="#283350" vertical={false} />
               <XAxis dataKey="d" tickFormatter={(v) => day(v).slice(3)} stroke="#8B93A7" fontSize={12} minTickGap={48} />
               <YAxis stroke="#8B93A7" fontSize={12} width={44} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: "#1B2130", border: "1px solid #2F384C", borderRadius: 8, color: "#ECE6D8" }} labelFormatter={(v) => day(v as string)}
+              <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8, color: "#EEE8DB" }} labelFormatter={(v) => day(v as string)}
                 itemSorter={(i: any) => -(i.value ?? 0)} formatter={(v: number, n: string) => [`₹${v.toFixed(1)}`, n]} />
               {on.map((s) => <Line key={s} dataKey={s} stroke={color(s)} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />)}
             </LineChart>

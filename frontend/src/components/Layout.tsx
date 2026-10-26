@@ -1,3 +1,5 @@
+import { Briefcase, CandlestickChart, FlaskConical, Gauge, GraduationCap, HandCoins, LayoutDashboard, ListFilter, LogOut, LucideIcon, Menu, MessagesSquare,
+  Newspaper, PieChart, Power, ReceiptText, Scale, ScrollText, Settings, SquareTerminal, Workflow, X } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { Me } from "../App";
@@ -5,12 +7,28 @@ import { api } from "../lib/api";
 import { useAct, useApi, useLiveStream } from "../lib/hooks";
 import { ModeBadge, Modal, useToast } from "./ui";
 
-const nav: { group: string; items: [string, string][] }[] = [
-  { group: "Overview", items: [["/", "Dashboard"], ["/decisions", "Decision log"]] },
-  { group: "Trade", items: [["/algos", "Algo builder"], ["/pattern-lab", "Pattern lab"], ["/invest", "Manual invest"], ["/screener", "Screener"], ["/compare", "Compare stocks"], ["/stock", "Stock charts"], ["/trades", "Trades & positions"], ["/orders", "Orders"]] },
-  { group: "Understand", items: [["/ask", "Ask AI"], ["/news", "News feed"], ["/portfolio", "Portfolio X-Ray"], ["/evals", "Evals"], ["/learning", "Learning"]] },
-  { group: "System", items: [["/logs", "Logs"], ["/settings", "Settings"]] },
+const nav: { group: string; items: [string, string, LucideIcon][] }[] = [
+  { group: "Overview", items: [["/", "Dashboard", LayoutDashboard], ["/decisions", "Decision log", ScrollText]] },
+  { group: "Trade", items: [["/algos", "Algo builder", Workflow], ["/pattern-lab", "Pattern lab", FlaskConical], ["/invest", "Manual invest", HandCoins],
+    ["/screener", "Screener", ListFilter], ["/compare", "Compare stocks", Scale], ["/stock", "Stock charts", CandlestickChart],
+    ["/trades", "Trades & positions", Briefcase], ["/orders", "Orders", ReceiptText]] },
+  { group: "Understand", items: [["/ask", "Ask AI", MessagesSquare], ["/news", "News feed", Newspaper], ["/portfolio", "Portfolio X-Ray", PieChart],
+    ["/evals", "Evals", Gauge], ["/learning", "Learning", GraduationCap]] },
+  { group: "System", items: [["/logs", "Logs", SquareTerminal], ["/settings", "Settings", Settings]] },
 ];
+
+/** NSE session in India time: open 09:15-15:30 on weekdays (holidays come from the dashboard's market flag). */
+function useMarketClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30_000); return () => clearInterval(t); }, []);
+  const ist = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60_000);
+  const mins = ist.getHours() * 60 + ist.getMinutes(), day = ist.getDay();
+  const weekday = day >= 1 && day <= 5, open = weekday && mins >= 555 && mins < 930;
+  const fmt = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
+  if (open) return { open: true, text: `Market open, closes in ${fmt(930 - mins)}` };
+  if (weekday && mins < 555) return { open: false, text: `Market opens in ${fmt(555 - mins)}` };
+  return { open: false, text: "Market closed" };
+}
 
 const kiteMessages: Record<string, [string, string]> = {
   connected: ["Zerodha connected for today.", "ok"],
@@ -51,52 +69,59 @@ export default function Layout({ me, onLogout, children }: { me: Me; onLogout: (
 
   const m = mode.data;
   const k = kite.data;
+  const clock = useMarketClock();
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[232px_1fr]">
-      <aside className={`${open ? "block" : "hidden"} fixed inset-0 z-40 overflow-y-auto bg-dusk md:static md:block md:border-r md:border-dusk-line`}>
-        <div className="flex items-center justify-between px-5 py-5">
+    <div className="min-h-screen md:grid md:grid-cols-[248px_1fr]">
+      <aside className={`${open ? "block" : "hidden"} fixed inset-0 z-40 overflow-y-auto bg-dusk-deep md:sticky md:top-0 md:block md:h-screen md:border-r md:border-dusk-line/70 md:bg-dusk-deep/60 md:backdrop-blur`}>
+        <div className="flex items-center justify-between px-5 pb-4 pt-5">
           <NavLink to="/" className="flex items-center gap-2.5">
-            <img src="/favicon.svg" alt="" className="h-8 w-8" />
-            <span className="font-display text-xl font-semibold tracking-tight">Syena</span>
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-saffron-soft ring-1 ring-saffron/30"><img src="/favicon.svg" alt="" className="h-6 w-6" /></span>
+            <span className="font-display text-[21px] font-semibold tracking-tight">Syena</span>
           </NavLink>
-          <button className="btn-ghost px-2 py-1 md:hidden" onClick={() => setOpen(false)}>Close</button>
+          <button className="btn-ghost px-2 py-1.5 md:hidden" onClick={() => setOpen(false)} aria-label="Close menu"><X size={18} /></button>
         </div>
-        <nav className="space-y-5 px-3 pb-8" aria-label="Main">
+        <nav className="space-y-5 px-3 pb-6" aria-label="Main">
           {nav.map((g) => (
             <div key={g.group}>
-              <div className="px-2 pb-1 text-[13px] text-mute">{g.group}</div>
-              {g.items.map(([to, label]) => (
+              <div className="px-3 pb-1.5 text-[12px] font-medium text-mute/80">{g.group}</div>
+              {g.items.map(([to, label, Icon]) => (
                 <NavLink key={to} to={to} end={to === "/"}
-                  className={({ isActive }) => `block rounded-lg px-2.5 py-1.5 text-[15px] ${isActive ? "bg-dusk-raised font-semibold text-parch" : "text-parch-dim hover:text-parch"}`}>
-                  {label}
+                  className={({ isActive }) => `group relative flex items-center gap-3 rounded-xl px-3 py-[7px] text-[14.5px] transition-colors ${isActive
+                    ? "bg-dusk-raised text-parch font-semibold before:absolute before:-left-3 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-saffron"
+                    : "text-parch-dim hover:bg-dusk-raised/50 hover:text-parch"}`}>
+                  {({ isActive }) => <><Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} className={isActive ? "text-saffron" : "text-mute group-hover:text-parch-dim"} />{label}</>}
                 </NavLink>
               ))}
             </div>
           ))}
-          <div className="border-t border-dusk-line px-2 pt-4 text-sm text-mute">
-            Signed in as {me.username}
-            <button className="mt-2 block text-parch-dim underline-offset-2 hover:underline" onClick={logout}>Sign out</button>
-          </div>
         </nav>
+        <div className="mx-3 mb-5 flex items-center gap-3 rounded-xl border border-dusk-line/70 bg-dusk-panel/60 px-3 py-2.5">
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-sky-soft font-display text-sm font-semibold uppercase text-sky">{me.username.slice(0, 1)}</span>
+          <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{me.username}</div><div className="text-2xs text-mute">signed in for 24 h</div></div>
+          <button className="rounded-lg p-1.5 text-mute hover:bg-dusk-raised hover:text-parch" onClick={logout} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+        </div>
       </aside>
 
       <div className="min-w-0">
-        <header className="sticky top-0 z-30 flex flex-wrap items-center gap-2 border-b border-dusk-line bg-dusk/95 px-4 py-2.5 backdrop-blur md:px-8">
-          <button className="btn-ghost px-2.5 py-1.5 md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">Menu</button>
+        <header className="sticky top-0 z-30 flex flex-wrap items-center gap-2.5 border-b border-dusk-line/70 bg-dusk/80 px-4 py-2.5 backdrop-blur-md md:px-8">
+          <button className="btn-ghost px-2.5 py-1.5 md:hidden" onClick={() => setOpen(true)} aria-label="Open menu"><Menu size={18} /></button>
           {m && <ModeBadge mode={m.mode} halted={m.halted} />}
+          <span className="chip hidden sm:inline-flex" title="NSE equity session, India time">
+            <span className={`h-2 w-2 rounded-full ${clock.open ? "bg-gain shadow-[0_0_0_3px_rgba(63,196,138,0.2)]" : "bg-mute"}`} />{clock.text}
+          </span>
           {k && (k.connected ? (
-            <span className="text-sm text-parch-dim">Zerodha connected{k.user_id ? ` (${k.user_id})` : ""}</span>
+            <span className="chip hidden md:inline-flex"><span className="h-2 w-2 rounded-full bg-gain" />Zerodha{k.user_id ? ` ${k.user_id}` : ""}</span>
           ) : (
             <button className="btn-ghost py-1.5" disabled={connect.isPending || !k.configured}
               title={k.configured ? "Daily Kite login" : "Set SYENA_KITE_API_KEY on the server first"}
               onClick={() => connect.mutate(undefined, { onSuccess: (r) => (window.location.href = r.url), onError: (e) => toast.show(e.message, "loss") })}>
-              Connect Zerodha
+              <span className="sm:hidden">Zerodha</span><span className="hidden sm:inline">Connect Zerodha</span>
             </button>
           ))}
           <div className="ml-auto flex items-center gap-2">
-            {m && !m.halted && <button className="btn-danger py-1.5" onClick={() => setHaltOpen(true)}>Halt trading</button>}
-            {m?.halted && <span className="text-sm text-loss">Halted: {m.halt_reason}</span>}
+            {m && !m.halted && <button className="btn-danger-ghost py-1.5" onClick={() => setHaltOpen(true)} aria-label="Halt trading"><Power size={15} /><span className="hidden sm:inline">Halt trading</span></button>}
+            {m?.halted && <span className="chip border-loss/40 text-loss">Halted: {m.halt_reason}</span>}
           </div>
         </header>
         <main>{children}</main>

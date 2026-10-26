@@ -65,7 +65,7 @@ function Funnel() {
   const analysed = (v.BUY ?? 0) + (v.HOLD ?? 0) + (v.SELL ?? 0);
   const steps: [string, number, string][] = [
     ["Fetched", f.fetched, ""],
-    ["Too old (>15 min)", st.STALE ?? 0, "skipped"],
+    ["Too old to trade", st.STALE ?? 0, "skipped"],
     ["Duplicates", st.DUPLICATE ?? 0, "skipped"],
     ["Not price-relevant", st.IRRELEVANT ?? 0, "skipped"],
     ["Analysed by AI", analysed, ""],

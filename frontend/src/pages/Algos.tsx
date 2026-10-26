@@ -284,11 +284,11 @@ function BacktestReport({ r }: { r: any }) {
         <div className="h-64" aria-label="Equity curve">
           <ResponsiveContainer>
             <LineChart data={r.equity} margin={{ left: 8, right: 8, top: 8 }}>
-              <CartesianGrid stroke="#2F384C" vertical={false} />
+              <CartesianGrid stroke="#283350" vertical={false} />
               <XAxis dataKey="ts" tickFormatter={(v) => day(v).slice(0, 6)} stroke="#8B93A7" fontSize={12} minTickGap={40} />
               <YAxis stroke="#8B93A7" fontSize={12} width={70} tickFormatter={(v) => `₹${(v / 1000).toFixed(1)}k`} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: "#1B2130", border: "1px solid #2F384C", borderRadius: 8 }} labelFormatter={(v) => day(v as string)} formatter={(v: number) => [money(v), "Equity"]} />
-              <Line dataKey="equity" stroke="#E8A33D" strokeWidth={2} dot={false} />
+              <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} labelFormatter={(v) => day(v as string)} formatter={(v: number) => [money(v), "Equity"]} />
+              <Line dataKey="equity" stroke="#F2A93B" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>

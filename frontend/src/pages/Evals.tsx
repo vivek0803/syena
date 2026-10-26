@@ -54,7 +54,7 @@ export default function Evals() {
               {latest && <div className="text-[13px] text-mute">{when(latest.started_at)} · {latest.n_cases} cases · ${Number(latest.cost_usd).toFixed(3)}</div>}
               {latest?.error && <p className="mt-1 text-sm text-loss">{latest.error}</p>}
               {trend.length > 1 && (
-                <div className="mt-2 h-14"><ResponsiveContainer><LineChart data={trend}><Line dataKey="v" stroke="#E8A33D" dot={false} strokeWidth={2} /><YAxis hide domain={["auto", "auto"]} /></LineChart></ResponsiveContainer></div>
+                <div className="mt-2 h-14"><ResponsiveContainer><LineChart data={trend}><Line dataKey="v" stroke="#F2A93B" dot={false} strokeWidth={2} /><YAxis hide domain={["auto", "auto"]} /></LineChart></ResponsiveContainer></div>
               )}
               <div className="mt-auto flex gap-2 pt-3">
                 <button className="btn-ghost py-1.5" onClick={() => run.mutate({ suite }, { onSuccess: () => toast.show(`${info.name} started`) })}>Run</button>
@@ -107,13 +107,13 @@ function ReplayDetail({ m }: { m: any }) {
           <div className="h-64">
             <ResponsiveContainer>
               <ScatterChart margin={{ left: 0, right: 16, top: 8 }}>
-                <CartesianGrid stroke="#2F384C" />
+                <CartesianGrid stroke="#283350" />
                 <XAxis type="number" dataKey="x" domain={[0, 100]} name="Confidence" unit="%" stroke="#8B93A7" fontSize={12} />
                 <YAxis type="number" dataKey="y" domain={[0, 100]} name="Hit rate" unit="%" stroke="#8B93A7" fontSize={12} />
                 <ZAxis dataKey="n" range={[40, 400]} name="Signals" />
                 <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]} stroke="#8B93A7" strokeDasharray="4 4" />
-                <Tooltip contentStyle={{ background: "#1B2130", border: "1px solid #2F384C", borderRadius: 8 }} />
-                <Scatter data={bins} fill="#E8A33D" />
+                <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} />
+                <Scatter data={bins} fill="#F2A93B" />
               </ScatterChart>
             </ResponsiveContainer>
           </div>

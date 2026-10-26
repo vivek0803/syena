@@ -14,8 +14,8 @@ const statusAbout: Record<string, string> = {
   RETIRED: "Kept for the record. Never deleted.",
 };
 const classColors: Record<string, string> = {
-  "good-entry/good-exit": "#56B488", "good-entry/bad-exit": "#7FA8D8", "bad-entry": "#E36B5D", "bad-luck": "#B9B3A6",
-  "rule-failure": "#C58BD6", "news-misread": "#E8A33D", "stop-too-tight": "#D98A4E", "target-too-greedy": "#8BC6C0",
+  "good-entry/good-exit": "#3FC48A", "good-entry/bad-exit": "#7FA8D8", "bad-entry": "#F2685A", "bad-luck": "#B9B3A6",
+  "rule-failure": "#C58BD6", "news-misread": "#F2A93B", "stop-too-tight": "#D98A4E", "target-too-greedy": "#8BC6C0",
   "correctly-avoided": "#3E8E6A", "missed-opportunity": "#A9874A",
 };
 
@@ -92,10 +92,10 @@ export default function Learning() {
             {charts.data.mistakes_by_week.length === 0 ? <p className="text-parch-dim">Appears after the first closed trades are reviewed.</p> : (
               <div className="h-64"><ResponsiveContainer>
                 <BarChart data={charts.data.mistakes_by_week}>
-                  <CartesianGrid stroke="#2F384C" vertical={false} />
+                  <CartesianGrid stroke="#283350" vertical={false} />
                   <XAxis dataKey="week" stroke="#8B93A7" fontSize={12} tickFormatter={(v) => day(v).slice(0, 6)} />
                   <YAxis stroke="#8B93A7" fontSize={12} allowDecimals={false} />
-                  <Tooltip cursor={{ fill: "#262E40" }} contentStyle={{ background: "#1B2130", border: "1px solid #2F384C", borderRadius: 8 }} />
+                  <Tooltip cursor={{ fill: "#1D2740" }} contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   {Object.keys(classColors).filter((c) => charts.data.mistakes_by_week.some((w: any) => w[c])).map((c) => <Bar key={c} dataKey={c} stackId="a" fill={classColors[c]} />)}
                 </BarChart>

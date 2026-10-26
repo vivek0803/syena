@@ -9,37 +9,46 @@ html, body, #root { min-height: 100%; }
 html, body { overflow-x: hidden; }
 .grid > * { min-width: 0; }
 body {
-  background: #141923;
-  color: #ECE6D8;
+  background: #0E1422;
+  background-image: radial-gradient(1200px 600px at 85% -10%, rgba(242,169,59,0.06), transparent 60%),
+                    radial-gradient(900px 500px at -10% 110%, rgba(125,180,245,0.05), transparent 60%);
+  background-attachment: fixed;
+  color: #EEE8DB;
   font-family: "Figtree Variable", system-ui, sans-serif;
   font-size: 15px;
-  line-height: 1.5;
+  line-height: 1.55;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
-:focus-visible { outline: 2px solid #E8A33D; outline-offset: 2px; border-radius: 6px; }
+::selection { background: rgba(242,169,59,0.35); }
+:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; border-radius: 8px; }
+* { scrollbar-width: thin; scrollbar-color: #283350 transparent; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 @layer components {
-  .panel { @apply bg-dusk-panel border border-dusk-line rounded-panel; }
-  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed; }
-  .btn-primary { @apply btn bg-saffron text-dusk hover:bg-saffron-deep; }
-  .btn-ghost { @apply btn border border-dusk-line text-parch hover:bg-dusk-raised; }
-  .btn-danger { @apply btn bg-loss text-dusk hover:brightness-110; }
-  .input { @apply w-full rounded-lg bg-dusk border border-dusk-line px-3 py-2 text-parch placeholder:text-mute/70 focus:border-saffron focus:outline-none; }
+  .panel { @apply bg-dusk-panel/90 border border-dusk-line/80 rounded-panel; }
+  .panel-hero { @apply rounded-panel border border-dusk-line bg-gradient-to-b from-dusk-raised/70 to-dusk-panel shadow-hero; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-saffron text-dusk-deep hover:bg-saffron-deep; }
+  .btn-ghost { @apply btn border border-dusk-line bg-dusk-panel/60 text-parch hover:border-mute/50 hover:bg-dusk-raised; }
+  .btn-danger { @apply btn bg-loss text-dusk-deep hover:brightness-110; }
+  .btn-danger-ghost { @apply btn border border-loss/40 text-loss hover:bg-loss-soft; }
+  .input { @apply w-full rounded-xl bg-dusk-deep/70 border border-dusk-line px-3 py-2 text-parch placeholder:text-mute/70 transition-colors focus:border-saffron/80 focus:outline-none focus:ring-2 focus:ring-saffron/20; }
   .label { @apply block text-sm text-parch-dim mb-1; }
-  .th { @apply text-left font-medium text-mute text-[13px] px-3 py-2 whitespace-nowrap; }
-  .td { @apply px-3 py-2 align-top border-t border-dusk-line/70 whitespace-nowrap; }
-  .h1 { @apply font-display text-[28px] leading-tight font-semibold tracking-tight text-parch; }
-  .h2 { @apply font-display text-lg font-semibold text-parch; }
+  .th { @apply text-left font-medium text-mute text-[13px] px-4 py-2.5 whitespace-nowrap bg-dusk-deep/40; }
+  .td { @apply px-4 py-3 align-middle border-t border-dusk-line/60 whitespace-nowrap; }
+  .h1 { @apply font-display text-[30px] leading-[1.15] font-semibold tracking-tight text-parch; }
+  .h2 { @apply font-display text-[17px] font-semibold text-parch; }
+  .num { @apply font-display tabular-nums tracking-tight; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border border-dusk-line bg-dusk-deep/50 px-2.5 py-1 text-[13px] text-parch-dim; }
 }
 
 /* the decision trail: a vertical path of gates */
 .trail { position: relative; padding-left: 22px; }
-.trail::before { content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px; width: 2px; background: #2F384C; }
+.trail::before { content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px; width: 2px; background: #283350; }
 .trail-node { position: relative; }
-.trail-node::before { content: ""; position: absolute; left: -19px; top: 7px; width: 10px; height: 10px; border-radius: 99px; background: #141923; border: 2px solid currentColor; }
-.trail-node.pass { color: #56B488; }
-.trail-node.fail { color: #E36B5D; }
-.trail-node.fail::before { background: #E36B5D; }
+.trail-node::before { content: ""; position: absolute; left: -19px; top: 7px; width: 10px; height: 10px; border-radius: 99px; background: #0E1422; border: 2px solid currentColor; }
+.trail-node.pass { color: #3FC48A; }
+.trail-node.fail { color: #F2685A; }
+.trail-node.fail::before { background: #F2685A; }
 .trail-node.end::before { width: 14px; height: 14px; left: -21px; top: 5px; background: currentColor; }
