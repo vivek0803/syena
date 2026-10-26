@@ -18,6 +18,7 @@ import Screener from "./pages/Screener";
 import Compare from "./pages/Compare";
 import Ask from "./pages/Ask";
 import PatternLab from "./pages/PatternLab";
+import Review from "./pages/Review";
 import Stock from "./pages/Stock";
 import SettingsPage from "./pages/Settings";
 import Trades from "./pages/Trades";
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/stock/:symbol" element={<Stock />} />
         <Route path="/ask" element={<Ask />} />
         <Route path="/pattern-lab" element={<PatternLab />} />
+        <Route path="/review" element={<Review />} />
         <Route path="/evals" element={<Evals />} />
         <Route path="/learning" element={<Learning />} />
         <Route path="/logs" element={<Logs />} />

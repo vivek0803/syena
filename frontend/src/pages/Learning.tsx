@@ -95,7 +95,7 @@ export default function Learning() {
                   <CartesianGrid stroke="#283350" vertical={false} />
                   <XAxis dataKey="week" stroke="#8B93A7" fontSize={12} tickFormatter={(v) => day(v).slice(0, 6)} />
                   <YAxis stroke="#8B93A7" fontSize={12} allowDecimals={false} />
-                  <Tooltip cursor={{ fill: "#1D2740" }} contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} />
+                  <Tooltip cursor={{ fill: "#1D2740" }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   {Object.keys(classColors).filter((c) => charts.data.mistakes_by_week.some((w: any) => w[c])).map((c) => <Bar key={c} dataKey={c} stackId="a" fill={classColors[c]} />)}
                 </BarChart>

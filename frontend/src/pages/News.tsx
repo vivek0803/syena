@@ -1,3 +1,4 @@
+import { Globe2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import AiVerdict from "../components/AiVerdict";
@@ -124,7 +125,7 @@ export default function News() {
           <optgroup label="One source">{(srcs.data ?? []).map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}</optgroup>
         </select>
         <select className="input w-auto" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          {["", "ANALYSED", "TRIAGED", "IRRELEVANT", "FILTERED", "STALE", "DUPLICATE", "NEW", "ERROR", "FAILED"].map((s) => <option key={s} value={s}>{s ? s.toLowerCase() : "all articles"}</option>)}
+          {["", "ANALYSED", "TRIAGED", "MACRO", "IRRELEVANT", "FILTERED", "STALE", "DUPLICATE", "NEW", "ERROR", "FAILED"].map((s) => <option key={s} value={s}>{s ? s.toLowerCase() : "all articles"}</option>)}
         </select>
         <input className="input w-32" placeholder="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
       </div>
@@ -142,6 +143,7 @@ export default function News() {
             </div>
             <a href={n.url} target="_blank" rel="noreferrer noopener" className="mt-1.5 block text-[17px] font-semibold leading-snug hover:underline">{n.title}</a>
             {n.triage_reason && <p className={`mt-1 text-sm ${n.triage_reason.startsWith("Error:") ? "text-loss" : "text-parch-dim"}`}>{n.triage_reason.startsWith("Error:") ? n.triage_reason : <>Filter: {n.triage_reason}</>}</p>}
+            {n.macro && <MacroCard m={n.macro} />}
             {n.analyses.length > 0 && <div className="mt-3 space-y-2">{n.analyses.map((a: any, i: number) => <AiVerdict key={i} a={a} threshold={threshold} compact />)}</div>}
             {n.errors?.length > 0 && <ul className="mt-2 space-y-1">{n.errors.map((e: any) => (
               <li key={e.decision_id}><Link to={`/decisions/${e.decision_id}`} className="flex items-start gap-2 rounded-lg border border-loss/30 bg-loss-soft/50 px-3 py-2 text-sm hover:brightness-110">
@@ -162,5 +164,23 @@ export default function News() {
       </ul>
       {toast.node}
     </Page>
+  );
+}
+
+
+/** Broad news linked to the stocks it helps or hurts (each stock is then judged by the normal analysis). */
+function MacroCard({ m }: { m: any }) {
+  return (
+    <div className="mt-3 rounded-xl border border-sky/30 bg-sky-soft/40 p-3.5">
+      <div className="flex items-center gap-2 text-sm font-semibold text-sky"><Globe2 size={16} />Broad news: who it affects</div>
+      {m.summary && <p className="mt-1 text-sm text-parch-dim">{m.summary}</p>}
+      <ul className="mt-2 space-y-1.5 text-sm">{(m.themes ?? []).map((t: any, i: number) => (
+        <li key={i}><span className={t.direction === "negative" ? "text-loss" : "text-gain"}>{t.direction === "negative" ? "▼" : "▲"} {t.theme}</span>
+          <span className="text-mute"> ({t.confidence}%)</span>: <span className="text-parch-dim">{t.why}</span>
+          {t.industries?.length > 0 && <span className="block text-[12px] text-mute">Industries: {t.industries.join(", ")}</span>}</li>))}</ul>
+      {m.stocks?.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{m.stocks.map((x: any) => (
+        <StockLink key={x.symbol} symbol={x.symbol} className={`rounded-md px-2 py-0.5 text-[13px] font-medium ${x.direction === "negative" ? "bg-loss-soft text-loss" : "bg-gain-soft text-gain"}`} />))}
+        <span className="self-center text-[12px] text-mute">each analysed below on its own merits</span></div>}
+    </div>
   );
 }

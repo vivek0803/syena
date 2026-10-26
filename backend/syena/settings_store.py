@@ -72,6 +72,7 @@ DEFAULTS: dict[str, Any] = {
         "analysis": "claude-haiku-5-5",
         "review": "claude-haiku-5-5",
         "judge": "claude-haiku-5-5",
+        "premium": "claude-opus-5-5",  # Ask AI and Compare: light use, so the strongest model (Fable 5.1 also works)
         "second_opinion": None,  # required to agree in LIVE when set
         "shadow_analysis": None,  # challenger model run in parallel, never traded
     },
@@ -80,6 +81,7 @@ DEFAULTS: dict[str, Any] = {
         "claude-haiku-5-5": [0.10, 0.50],
         "claude-sonnet-5-5": [2.0, 10.0],
         "claude-opus-5-5": [4.0, 20.0],
+        "claude-fable-5-1": [10.0, 50.0],
         "claude-haiku-4-5-20251001": [1.0, 5.0],
     },
     "ai_budget": {"daily_usd": 5.0},
@@ -97,7 +99,10 @@ DEFAULTS: dict[str, Any] = {
         "priced_in_pct": 2.0,  # skip a trade when the price already moved this much in its direction since the news
         # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
         "symbol_dedup_minutes": 60,
-        "notify_holdings": True,  # Telegram message when news about a stock you own is analysed  # same stock analysed in the last hour: another source's copy, no second AI call
+        "notify_holdings": True,
+        "macro_mapping": True,  # broad news (sanctions, tariffs, crude, RBI...) -> the stocks it affects
+        "macro_max_stocks": 5,
+        "macro_min_confidence": 60,  # Telegram message when news about a stock you own is analysed  # same stock analysed in the last hour: another source's copy, no second AI call
         "read_images": True,  # read text in Telegram post images with the AI (triage model)
         # candlestick patterns + trendlines shown to the AI for each analysed stock, per timeframe, over this many days
         "pattern_timeframes": ["day", "60minute", "15minute", "5minute", "minute"],

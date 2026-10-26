@@ -160,6 +160,10 @@ class FakeLLM:
                         "summary": "GOODCO is strongest."}
         self.image_text = "Infosys (INFY) breakout. Buy above 1520, target 1600, stop 1480."
         self.ask = {"in_scope": True, "answer": "INFY: ROE 20%. **Not investment advice.**"}
+        self.macro = {"is_macro": True, "summary": "EU tariffs on Indian IT and textile exports",
+                      "themes": [{"theme": "EU tariffs", "direction": "negative", "industries": ["Computers - Software & Consulting"],
+                                  "companies": ["Infosys", "Fake Exporter Ltd"], "why": "large European revenue", "confidence": 75},
+                                 {"theme": "weak link", "direction": "positive", "industries": [], "companies": ["TCS"], "why": "?", "confidence": 30}]}
         self.prompts: list[str] = []
 
     def __call__(self, model, system, user):
@@ -178,6 +182,8 @@ class FakeLLM:
             return self.image_text
         if system.startswith("You explain a ranking of NSE"):
             return _json.dumps(self.compare)
+        if system.startswith("You map broad market news"):
+            return _json.dumps(self.macro)
         if system.startswith("You are Syena's market assistant"):
             return _json.dumps(self.ask)
         if system.startswith("You review a proposed manual"):

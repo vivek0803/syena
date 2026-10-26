@@ -70,6 +70,8 @@ def news(status: str | None = None, symbol: str | None = None, source: str | Non
         out.append(ser(i, exclude=("content_hash",), extra={
             "symbols": syms, "event_type": tri.event_type if tri else None, "triage_reason": tri.summary if tri else None,
             "analyses": [_analysis_out(a, dec_by_sig) for a in ana], "errors": errors_by_news.get(i.id, []),
+            "macro": next(({"summary": m.summary, "themes": (m.result or {}).get("themes") or [], "stocks": (m.result or {}).get("stocks") or []}
+                           for m in an if m.stage == "macro" and (m.result or {}).get("is_macro")), None),
             "trades": trades_by_news.get(i.id, [])}))
     return out
 

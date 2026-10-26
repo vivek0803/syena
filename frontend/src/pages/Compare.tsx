@@ -227,7 +227,7 @@ function Performance({ rows, color, loading, error }: { rows: any[]; color: (s: 
               <CartesianGrid stroke="#283350" vertical={false} />
               <XAxis dataKey="d" tickFormatter={(v) => day(v).slice(3)} stroke="#8B93A7" fontSize={12} minTickGap={48} />
               <YAxis stroke="#8B93A7" fontSize={12} width={44} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8, color: "#EEE8DB" }} labelFormatter={(v) => day(v as string)}
+              <Tooltip labelFormatter={(v) => day(v as string)}
                 itemSorter={(i: any) => -(i.value ?? 0)} formatter={(v: number, n: string) => [`₹${v.toFixed(1)}`, n]} />
               {on.map((s) => <Line key={s} dataKey={s} stroke={color(s)} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />)}
             </LineChart>

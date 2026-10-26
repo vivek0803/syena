@@ -170,7 +170,7 @@ def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str |
     keep = [f for f in FIELDS if f not in ("volume", "high_52w", "low_52w", "book_value", "dividend_ps")]
     top = [dict(t, formula_score=scores[t["symbol"]]["score"], breakdown=scores[t["symbol"]]["breakdown"]) for t in table[:AI_EXPLAIN]]
     others = [f"{t['symbol']}: {scores[t['symbol']]['score']}" for t in table[AI_EXPLAIN:]]
-    res = llm.call(db, "stock_compare", "stock_compare", tier="analysis", max_tokens=1500 + 120 * len(top), temperature=0,
+    res = llm.call(db, "stock_compare", "stock_compare", tier="premium", max_tokens=1500 + 120 * len(top), temperature=0,
                    variables={
         "horizon": HORIZONS.get(horizon, HORIZONS["LONG_TERM"]),
         "fields": json.dumps({**{f: FIELDS[f][2] for f in keep}, **TECH_FIELDS}),

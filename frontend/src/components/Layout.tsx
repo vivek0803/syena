@@ -1,21 +1,11 @@
-import { Briefcase, CandlestickChart, FlaskConical, Gauge, GraduationCap, HandCoins, LayoutDashboard, ListFilter, LogOut, LucideIcon, Menu, MessagesSquare,
-  Newspaper, PieChart, Power, ReceiptText, Scale, ScrollText, Settings, SquareTerminal, Workflow, X } from "lucide-react";
+import { LogOut, Menu, Power, X } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { Me } from "../App";
 import { api } from "../lib/api";
 import { useAct, useApi, useLiveStream } from "../lib/hooks";
+import { ACCENTS, NAV } from "../lib/nav";
 import { ModeBadge, Modal, useToast } from "./ui";
-
-const nav: { group: string; items: [string, string, LucideIcon][] }[] = [
-  { group: "Overview", items: [["/", "Dashboard", LayoutDashboard], ["/decisions", "Decision log", ScrollText]] },
-  { group: "Trade", items: [["/algos", "Algo builder", Workflow], ["/pattern-lab", "Pattern lab", FlaskConical], ["/invest", "Manual invest", HandCoins],
-    ["/screener", "Screener", ListFilter], ["/compare", "Compare stocks", Scale], ["/stock", "Stock charts", CandlestickChart],
-    ["/trades", "Trades & positions", Briefcase], ["/orders", "Orders", ReceiptText]] },
-  { group: "Understand", items: [["/ask", "Ask AI", MessagesSquare], ["/news", "News feed", Newspaper], ["/portfolio", "Portfolio X-Ray", PieChart],
-    ["/evals", "Evals", Gauge], ["/learning", "Learning", GraduationCap]] },
-  { group: "System", items: [["/logs", "Logs", SquareTerminal], ["/settings", "Settings", Settings]] },
-];
 
 /** NSE session in India time: open 09:15-15:30 on weekdays (holidays come from the dashboard's market flag). */
 function useMarketClock() {
@@ -82,15 +72,17 @@ export default function Layout({ me, onLogout, children }: { me: Me; onLogout: (
           <button className="btn-ghost px-2 py-1.5 md:hidden" onClick={() => setOpen(false)} aria-label="Close menu"><X size={18} /></button>
         </div>
         <nav className="space-y-5 px-3 pb-6" aria-label="Main">
-          {nav.map((g) => (
+          {NAV.map((g) => (
             <div key={g.group}>
-              <div className="px-3 pb-1.5 text-[12px] font-medium text-mute/80">{g.group}</div>
-              {g.items.map(([to, label, Icon]) => (
-                <NavLink key={to} to={to} end={to === "/"}
+              <div className="flex items-center gap-2 px-3 pb-1.5 text-[12px] font-medium text-mute/80">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: ACCENTS[g.group].hex }} />{g.group}
+              </div>
+              {g.items.map(({ to, label, icon: Icon }) => (
+                <NavLink key={to} to={to} end={to === "/"} style={{ ["--accent" as any]: ACCENTS[g.group].hex }}
                   className={({ isActive }) => `group relative flex items-center gap-3 rounded-xl px-3 py-[7px] text-[14.5px] transition-colors ${isActive
-                    ? "bg-dusk-raised text-parch font-semibold before:absolute before:-left-3 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-saffron"
+                    ? "bg-dusk-raised text-parch font-semibold before:absolute before:-left-3 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-r-full before:bg-[var(--accent)]"
                     : "text-parch-dim hover:bg-dusk-raised/50 hover:text-parch"}`}>
-                  {({ isActive }) => <><Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} className={isActive ? "text-saffron" : "text-mute group-hover:text-parch-dim"} />{label}</>}
+                  {({ isActive }) => <><Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} className={`transition-colors ${isActive ? "text-[var(--accent)]" : "text-mute group-hover:text-[var(--accent)]"}`} />{label}</>}
                 </NavLink>
               ))}
             </div>

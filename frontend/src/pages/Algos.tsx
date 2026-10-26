@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Empty, ErrorNote, Field, Json, Loading, Modal, Page, Panel, Pill, Stat, Table, Trail, decisionLabel, decisionTone, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { day, money, num, ratio, signed, tone, when } from "../lib/format";
@@ -283,13 +283,14 @@ function BacktestReport({ r }: { r: any }) {
       {r.equity?.length > 1 && (
         <div className="h-64" aria-label="Equity curve">
           <ResponsiveContainer>
-            <LineChart data={r.equity} margin={{ left: 8, right: 8, top: 8 }}>
-              <CartesianGrid stroke="#283350" vertical={false} />
-              <XAxis dataKey="ts" tickFormatter={(v) => day(v).slice(0, 6)} stroke="#8B93A7" fontSize={12} minTickGap={40} />
-              <YAxis stroke="#8B93A7" fontSize={12} width={70} tickFormatter={(v) => `₹${(v / 1000).toFixed(1)}k`} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} labelFormatter={(v) => day(v as string)} formatter={(v: number) => [money(v), "Equity"]} />
-              <Line dataKey="equity" stroke="#F2A93B" strokeWidth={2} dot={false} />
-            </LineChart>
+            <AreaChart data={r.equity} margin={{ left: 8, right: 8, top: 8 }}>
+              <defs><linearGradient id="eqFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#3FC48A" stopOpacity={0.35} /><stop offset="1" stopColor="#3FC48A" stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid vertical={false} strokeDasharray="2 4" />
+              <XAxis dataKey="ts" tickFormatter={(v) => day(v).slice(0, 6)} tickLine={false} axisLine={false} minTickGap={40} />
+              <YAxis width={70} tickLine={false} axisLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(1)}k`} domain={["auto", "auto"]} />
+              <Tooltip labelFormatter={(v) => day(v as string)} formatter={(v: number) => [money(v), "Equity"]} />
+              <Area dataKey="equity" stroke="#3FC48A" strokeWidth={2.2} fill="url(#eqFill)" dot={false} activeDot={{ r: 4, strokeWidth: 0 }} />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}

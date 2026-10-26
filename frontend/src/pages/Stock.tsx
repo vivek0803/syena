@@ -296,7 +296,7 @@ function PriceChart({ data, trades }: { data: any; trades: any[] }) {
     if (!box.current || !rsiBox.current) return;
     const base = {
       autoSize: true, layout: { background: { color: C.bg }, textColor: C.text, fontFamily: "Figtree Variable, system-ui, sans-serif" },
-      grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } }, rightPriceScale: { borderColor: C.line },
+      grid: { vertLines: { visible: false }, horzLines: { color: C.grid, style: LineStyle.Dotted } }, rightPriceScale: { borderColor: C.line },
       timeScale: { borderColor: C.line, timeVisible: intraday, secondsVisible: false }, crosshair: { mode: CrosshairMode.Normal },
       localization: { locale: "en-IN", priceFormatter: (p: number) => p.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
     };

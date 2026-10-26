@@ -20,7 +20,7 @@ from syena.execution.checks import Check
 from syena.learning import pretrade
 from syena.learning.features import build_setup
 from syena.models import Algo, DecisionType, NewsAnalysis, NewsItem, Signal, Style, Trade, TradeStatus, TradingMode
-from syena.news import mapping, sources
+from syena.news import macro, mapping, sources
 from syena.news.context import market_context, technicals
 from syena.services import mode as mode_service
 
@@ -210,7 +210,7 @@ def _facts_or_note(db: Session, symbol: str, daily) -> str:
 
 
 def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime, *, event_type: str | None = None,
-            model: str | None = None, shadow: bool = False, eval_run_id: int | None = None) -> dict:
+            model: str | None = None, shadow: bool = False, eval_run_id: int | None = None, macro_note: str | None = None) -> dict:
     daily = md.candles(symbol, "day", as_of - timedelta(days=400), as_of)
     daily = daily[daily.index <= as_of] if len(daily) else daily  # belt and braces against lookahead
     tech = technicals(daily)
@@ -229,7 +229,7 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
                         event_type=event_type, vix=ctx["raw"].get("vix"), market_context=ctx["score"])
     consult = pretrade.consult(db, setup, None, as_of=as_of)
     active = [l for l in pretrade.retrieve(db, setup, statuses=("ACTIVE",), as_of=as_of)]
-    news_txt = untrusted("\n\n".join(item_text(i) for i in items if i.published_at <= as_of), "news")
+    news_txt = untrusted("\n\n".join(item_text(i) for i in items if i.published_at <= as_of) + (f"\n\n{macro_note}" if macro_note else ""), "news")
     res = llm.call(db, "news_analysis", "news_analysis", tier=None if model else "analysis", model=model, max_tokens=900,
                    shadow=shadow, eval_run_id=eval_run_id,
                    variables={"symbol": symbol, "news": news_txt, "technicals": technicals_brief(tech),
@@ -510,9 +510,9 @@ def second_opinion(db: Session, symbol: str, items, md, as_of, primary: dict) ->
 
 
 def process_symbol(db: Session, symbol: str, items: list[NewsItem], md, event_type: str | None, broker_factory=None,
-                   now: datetime | None = None) -> Signal:
+                   now: datetime | None = None, macro_note: str | None = None) -> Signal:
     now = now or utcnow()
-    a = analyse(db, symbol, items, md, now, event_type=event_type)
+    a = analyse(db, symbol, items, md, now, event_type=event_type, macro_note=macro_note)
     consult = a["consult"]
     conf_after = a["confidence"]
     # re-run the lesson consult now that we know the model's confidence
@@ -660,6 +660,7 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
     # one more try for items whose triage failed (e.g. a garbled AI answer), while the news is still fresh
     pending += list(db.scalars(select(NewsItem).where(NewsItem.status == "ERROR").order_by(NewsItem.published_at).limit(10)))
     by_symbol: dict[str, tuple[list[NewsItem], str | None]] = {}
+    macro_notes: dict[str, str] = {}
     retry_ids: set[int] = set()
     # relevant items whose analysis failed earlier (e.g. prices were unavailable) are analysed again while fresh
     for item in db.scalars(select(NewsItem).where(NewsItem.status == "TRIAGED").limit(20)):
@@ -682,6 +683,12 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
                 for s in t["symbols"]:
                     lst, _ = by_symbol.get(s, ([], None))
                     by_symbol[s] = (lst + [item], t.get("event_type"))
+            elif cfg.get("macro_mapping", True) and macro.looks_macro(item):
+                for o in macro.map_impact(db, item):  # broad news: the stocks it helps or hurts
+                    if o["symbol"] not in by_symbol:
+                        by_symbol[o["symbol"]] = ([item], "macro")
+                        macro_notes[o["symbol"]] = macro.note_for(o)
+                stats["macro_mapped"] = stats.get("macro_mapped", 0) + 1
         except (llm.BudgetExceeded, llm.LLMUnavailable) as e:
             log.warning("news triage paused", extra={"reason": str(e)})
             break
@@ -724,7 +731,7 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
                     log.info("filing pdf not read", extra={"news_id": it.id, "error": str(e)[:200]})
         db.commit()
         try:
-            process_symbol(db, sym, items, md, etype, broker_factory, now=now)
+            process_symbol(db, sym, items, md, etype, broker_factory, now=now, macro_note=macro_notes.get(sym))
             stats["signals"] += 1
         except (llm.BudgetExceeded, llm.LLMUnavailable) as e:
             log.warning("news analysis paused", extra={"reason": str(e)})

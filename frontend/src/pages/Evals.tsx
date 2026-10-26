@@ -112,7 +112,7 @@ function ReplayDetail({ m }: { m: any }) {
                 <YAxis type="number" dataKey="y" domain={[0, 100]} name="Hit rate" unit="%" stroke="#8B93A7" fontSize={12} />
                 <ZAxis dataKey="n" range={[40, 400]} name="Signals" />
                 <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]} stroke="#8B93A7" strokeDasharray="4 4" />
-                <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} />
+                <Tooltip />
                 <Scatter data={bins} fill="#F2A93B" />
               </ScatterChart>
             </ResponsiveContainer>

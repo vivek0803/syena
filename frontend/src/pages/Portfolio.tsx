@@ -174,7 +174,7 @@ export default function Portfolio() {
               <BarChart data={p.sectors} layout="vertical" margin={{ left: 12, right: 24 }}>
                 <XAxis type="number" stroke="#8B93A7" fontSize={12} tickFormatter={(v) => `${v}%`} />
                 <YAxis type="category" dataKey="sector" stroke="#8B93A7" fontSize={12} width={170} />
-                <Tooltip contentStyle={{ background: "#151D2E", border: "1px solid #283350", borderRadius: 8 }} formatter={(v: number) => [`${v.toFixed(2)}%`, "Share"]} />
+                <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`, "Share"]} />
                 <Bar dataKey="pct" fill="#F2A93B" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>

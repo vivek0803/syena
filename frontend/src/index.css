@@ -52,3 +52,13 @@ body {
 .trail-node.fail { color: #F2685A; }
 .trail-node.fail::before { background: #F2685A; }
 .trail-node.end::before { width: 14px; height: 14px; left: -21px; top: 5px; background: currentColor; }
+
+/* charts (recharts): one quiet theme everywhere: faint grid, muted axis text, a floating tooltip */
+.recharts-cartesian-grid line { stroke: rgba(40, 51, 80, 0.55); }
+.recharts-cartesian-axis-tick-value, .recharts-text { fill: #858DA3; font-size: 12px; }
+.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line { stroke: #283350; }
+.recharts-default-tooltip { background: rgba(21, 29, 46, 0.96) !important; border: 1px solid #283350 !important; border-radius: 12px !important;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.55); padding: 8px 12px !important; color: #EEE8DB !important; }
+.recharts-tooltip-label { color: #B7B1A4 !important; margin-bottom: 4px !important; }
+.recharts-legend-item-text { color: #B7B1A4 !important; }
+.recharts-tooltip-cursor { fill: rgba(125, 180, 245, 0.06); }

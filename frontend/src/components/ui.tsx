@@ -1,12 +1,25 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { ACCENTS, navFor } from "../lib/nav";
 
 export function Page({ title, intro, actions, children }: { title: string; intro?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+  const loc = useLocation();
+  const meta = navFor(loc.pathname);
+  const accent = meta ? ACCENTS[meta.group].hex : ACCENTS.Overview.hex;
+  const Icon = meta?.icon;
   return (
-    <div className="mx-auto w-full max-w-[1360px] px-4 pb-20 pt-7 md:px-8">
+    <div className="mx-auto w-full max-w-[1360px] px-4 pb-20 pt-7 md:px-8" style={{ ["--accent" as any]: accent }}>
       <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
-        <div className="max-w-2xl">
-          <h1 className="h1">{title}</h1>
-          {intro && <p className="mt-1.5 text-[15px] leading-relaxed text-parch-dim">{intro}</p>}
+        <div className="flex max-w-3xl items-start gap-4">
+          {Icon && (
+            <span className="mt-0.5 hidden h-12 w-12 shrink-0 place-items-center rounded-2xl ring-1 ring-inset sm:grid"
+              style={{ background: `linear-gradient(145deg, ${accent}40, ${accent}0d)`, color: accent, ["--tw-ring-color" as any]: `${accent}55` }} aria-hidden>
+              <Icon size={23} strokeWidth={2} />
+            </span>)}
+          <div>
+            <h1 className="h1">{title}</h1>
+            {intro && <p className="mt-1.5 text-[15px] leading-relaxed text-parch-dim">{intro}</p>}
+          </div>
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </header>
@@ -20,7 +33,7 @@ export function Panel({ title, aside, children, className = "", pad = true, icon
     <section className={`panel ${className}`}>
       {(title || aside) && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-3 pt-4">
-          {title && <h2 className="h2 flex items-center gap-2">{icon && <span className="text-saffron" aria-hidden>{icon}</span>}{title}</h2>}
+          {title && <h2 className="h2 flex items-center gap-2">{icon && <span className="text-[var(--accent,#F2A93B)]" aria-hidden>{icon}</span>}{title}</h2>}
           {aside}
         </div>
       )}

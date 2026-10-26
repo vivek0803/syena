@@ -241,6 +241,19 @@ def daily_close(db):
     return out
 
 
+@job("missed_moves")
+def missed_moves(db):
+    """After the close: the day's biggest movers and whether the news pipeline caught them."""
+    from syena.news import review
+    from syena.notify import telegram
+
+    if not calendar.is_trading_day(calendar.to_ist(utcnow()).date(), settings_store.get(db, "holidays")):
+        return {"skipped": "holiday"}
+    rep = review.build(db)
+    telegram.notify(db, "missed_moves", review.telegram_summary(rep))
+    return rep["counts"]
+
+
 @job("daily_summary")
 def summary_job(db):
     if calendar.is_trading_day(calendar.to_ist(utcnow()).date(), settings_store.get(db, "holidays")):
@@ -330,6 +343,7 @@ def build_scheduler() -> BlockingScheduler:
     s.add_job(summary_job, "cron", hour=15, minute=45, day_of_week="mon-fri", id="daily_summary")
     s.add_job(weekly, "cron", day_of_week="sat", hour=10, minute=0, id="weekly")
     s.add_job(stock_daily, "cron", hour=16, minute=5, day_of_week="mon-fri", id="stock_daily")
+    s.add_job(missed_moves, "cron", hour=17, minute=0, day_of_week="mon-fri", id="missed_moves")
     s.add_job(fundamentals, "cron", hour=20, minute=0, id="fundamentals")
     s.add_job(pending_orders, "cron", minute="*", second=40, id="pending_orders")
     s.add_job(instruments, "cron", hour=8, minute=30, day_of_week="mon-fri", id="instruments")

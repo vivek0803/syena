@@ -123,7 +123,7 @@ def answer(db: Session, question: str, history: list[dict] | None = None, md=Non
     if want_portfolio:
         context.append(_portfolio_context(mine))
     convo = "\n".join(f"{h['role']}: {str(h['content'])[:1500]}" for h in hist) or "(none)"
-    res = llm.call(db, "ask_ai", "ask_ai", tier="analysis", max_tokens=1400, temperature=0.2, variables={
+    res = llm.call(db, "ask_ai", "ask_ai", tier="premium", max_tokens=1400, temperature=0.2, variables={
         "question": untrusted(q, "user_question"),
         "history": untrusted(convo, "conversation"),
         "context": untrusted("\n\n".join(context), "syena_data"),

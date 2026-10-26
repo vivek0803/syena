@@ -238,4 +238,35 @@ ASK_AI = Prompt(
     "Syena data:\n{context}\n\nConversation so far:\n{history}\n\nQuestion:\n{question}",
 )
 
-ALL = {p.name: p for p in [ASK_AI, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}
+MACRO_IMPACT = Prompt(
+    "macro_impact", "v1",
+    "You map broad market news for India (policy, sanctions, tariffs, commodity prices, currency, rates, weather, "
+    "regulation, global events) to the NSE-listed companies it affects. " + DATA_RULE + "\n"
+    "First decide is_macro: true only if the item is a broad development that changes business conditions for a "
+    "group of companies (not news about one company, not a market wrap, not price commentary). Then give at most 3 "
+    "themes. For each: the theme, the direction for the affected companies (positive or negative), the industries hit "
+    "(choose ONLY from the provided industry list, spelled exactly), up to 6 well-known listed Indian companies with "
+    "clear, material exposure (e.g. a large share of revenue from that region, product or input), a one-line why, and "
+    "your confidence 0-100 that it moves those stocks within a few days. Be specific and conservative: name a company "
+    "only when its exposure is well known and large; prefer fewer, surer names. Example: new EU tariffs on Indian goods "
+    "-> negative for exporters with big European sales (textile and auto-component exporters, IT services firms with "
+    "large European revenue).\n"
+    "Output ONLY JSON: {\"is_macro\":bool,\"summary\":\"one sentence\",\"themes\":[{\"theme\":\"..\",\"direction\":"
+    "\"positive|negative\",\"industries\":[\"..\"],\"companies\":[\"company name or NSE symbol\"],\"why\":\"..\","
+    "\"confidence\":0-100}]}",
+    "Industries on NSE (use these exact names):\n{industries}\n\nNews item:\n{item}",
+)
+
+MISSED_MOVES = Prompt(
+    "missed_moves", "v1",
+    "You review a day of an NSE news-trading system. " + DATA_RULE + "\n"
+    "You get the day's biggest movers with what the system did: traded_right, traded_wrong, rejected (caught but a check "
+    "blocked it, the check is named), misread (AI judged the news wrongly), error, dropped (news never reached the AI, reason "
+    "given), sector / market (no company news, the sector or market moved), no_news (nothing in the system's sources). "
+    "Write at most 6 short bullet points ('- ' each): the patterns that cost the most opportunities and one concrete fix for "
+    "each (a source to add, a check or threshold to review, a kind of news the screen keeps dropping). Use only the data "
+    "given; mention symbols as examples. No preamble.",
+    "Day: {day}\nMarket: {market}\n\nMovers:\n{movers}",
+)
+
+ALL = {p.name: p for p in [ASK_AI, MACRO_IMPACT, MISSED_MOVES, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}
