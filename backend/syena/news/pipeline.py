@@ -29,15 +29,51 @@ log = logging.getLogger("syena.news")
 
 # ---------------------------------------------------------------- ingest + dedupe
 def max_age(db: Session) -> timedelta:
+    """How long news published during market hours stays tradeable (default 2 hours)."""
     cfg = settings_store.get(db, "news")
-    return timedelta(minutes=float(cfg.get("max_age_minutes") or 15))
+    return timedelta(minutes=float(cfg.get("max_age_minutes") or 120))
+
+
+def fresh_until(db: Session, published: datetime) -> datetime:
+    """Until when a news item can still be acted on.
+    During market hours: max_age (2 h), but never past the close; whatever the close cuts off waits for the next open.
+    After the close, overnight, weekends and holidays: until 09:30 on the next trading day, so evening results are
+    traded at the open (orders queue and go in at 09:16). Whether the move already happened is checked separately
+    against the price (priced_in_pct), which is a better test than the clock."""
+    from datetime import datetime as _dt
+
+    from syena.market import calendar as cal
+
+    holidays = settings_store.get(db, "holidays")
+    cfg = settings_store.get(db, "news")
+    carry = timedelta(minutes=float(cfg.get("carry_minutes_after_open") or 15))
+    p = cal.to_ist(published)
+
+    def next_open(after_date, include_today: bool):
+        d = after_date if include_today and cal.is_trading_day(after_date, holidays) else cal.next_trading_day(after_date, holidays)
+        return cal.market_open_at(d) + carry
+
+    if cal.is_market_open(published, holidays):
+        until = published + max_age(db)
+        close = _dt.combine(p.date(), cal.CLOSE, cal.IST)
+        if until > close:
+            until = max(close, next_open(p.date(), False)) if cfg.get("carry_after_hours", True) else close
+        return until
+    if not cfg.get("carry_after_hours", True):
+        return published + max_age(db)
+    if cal.is_trading_day(p.date(), holidays) and p.time() < cal.OPEN:
+        return next_open(p.date(), True)  # early morning news: today's open
+    return next_open(p.date(), False)
+
+
+def is_stale(db: Session, published: datetime, now: datetime) -> bool:
+    return now > fresh_until(db, published)
 
 
 def ingest(db: Session, raw: list[sources.RawItem], now: datetime | None = None) -> list[NewsItem]:
     """Store new items. Exact repeats are dropped; the same story from another source is marked DUPLICATE;
-    anything older than max_age_minutes is marked STALE. Only NEW items ever reach the AI."""
+    news that can no longer be acted on is marked STALE (see fresh_until). Only NEW items ever reach the AI."""
     now = now or utcnow()
-    limit = max_age(db)
     recent = list(db.scalars(select(NewsItem).where(NewsItem.fetched_at >= now - timedelta(hours=48))))
     new = []
     for r in sorted(raw, key=lambda x: x.published_at):
@@ -54,7 +90,7 @@ def ingest(db: Session, raw: list[sources.RawItem], now: datetime | None = None)
         routine = False
         if dup:
             item.status, item.dup_of_id = "DUPLICATE", dup.dup_of_id or dup.id
-        elif now - published > limit:
+        elif is_stale(db, published, now):
             item.status = "STALE"  # stored for the record, never sent to the AI or traded
         elif sources.is_routine(r.title, r.body):
             item.status, routine = "IRRELEVANT", True  # routine exchange paperwork: no AI call
@@ -350,6 +386,35 @@ def friendly_error(e: Exception) -> str:
     return msg[:300] or type(e).__name__
 
 
+def move_since(md, symbol: str, published: datetime, now: datetime, price: float | None) -> tuple[float | None, float | None]:
+    """% move from the last price before the news to now, and that reference price. 5-minute candles that finished
+    before the news give the reference; for after-hours news that is the previous close."""
+    try:
+        df = md.candles(symbol, "5minute", published - timedelta(days=5), now)
+    except Exception:
+        return None, None
+    if df is None or not len(df):
+        return None, None
+    before_news = df[df.index + timedelta(minutes=5) <= published]
+    if not len(before_news):
+        return None, None
+    ref = float(before_news["close"].iloc[-1])
+    last = price or float(df["close"].iloc[-1])
+    return ((last / ref - 1) * 100 if ref else None), ref
+
+
+def priced_in_check(db: Session, md, symbol: str, published: datetime, now: datetime, action: str, price: float | None) -> Check:
+    """Has the market already moved on this news? A buy after the stock already jumped buys the top."""
+    limit = float(settings_store.get(db, "news").get("priced_in_pct") or 0)
+    move, ref = move_since(md, symbol, published, now, price)
+    if not limit or move is None:
+        return Check("priced_in", True, "price move since the news unknown" if limit else "check off")
+    against = move if action == "BUY" else -move
+    ok = against < limit
+    return Check("priced_in", ok, f"{move:+.2f}% since the news (₹{ref:,.2f} before it)"
+                 + ("" if ok else f": already moved {limit:g}%+ in the trade's direction, the news is priced in"))
+
+
 def holding_news_alert(db: Session, symbol: str, a: dict, mine: dict) -> None:
     """Telegram message when news about something you own has been analysed, whatever Syena decides to trade."""
     from syena.config import get_settings
@@ -508,6 +573,7 @@ def process_symbol(db: Session, symbol: str, items: list[NewsItem], md, event_ty
                               [verdict, Check("short_selling", False, "short selling is turned off in Settings → News")])
         return sig
     checks = gate_checks(db, a, conf_after) + consult.checks
+    checks.append(priced_in_check(db, md, symbol, min(i.published_at for i in items), now, a["action"], a["price"]))
     base_intent["confidence"] = a["weighted_score"]  # what the threshold was compared with
     base_intent["reasoning"] = {**base_intent["reasoning"], "weighted_score": a["weighted_score"], "score_breakdown": a["score_breakdown"]}
     so = second_opinion(db, symbol, items, md, now, a) if a["action"] in ("BUY", "SELL") else None
@@ -564,7 +630,7 @@ def is_filing(item: NewsItem) -> bool:
 
 def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now: datetime | None = None,
               fetch_telegram=None, http_get=None, filing_get=None) -> dict:
-    """One polling cycle: fetch, dedupe, drop stale (> max_age_minutes), read images, triage, analyse, gate."""
+    """One polling cycle: fetch, dedupe, drop stale (see fresh_until), read images, triage, analyse, gate."""
     now = now or utcnow()
     cfg = settings_store.get(db, "news")
     raw = list(fetch(cfg["feeds"]))
@@ -574,7 +640,7 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
         raw += fetch_telegram(cfg["telegram_channels"])
     new = ingest(db, raw, now=now)
     _save_health(db)
-    fresh = now - max_age(db)
+    oldest = now - timedelta(days=4)
     held = [t.stock for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.OPEN))]
     from syena.portfolio.mine import my_stocks
 
@@ -583,9 +649,10 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
              "triaged": 0, "relevant": 0, "signals": 0, "symbol_duplicates": 0, "errors": 0}
 
     # anything that went past max_age while waiting is skipped: no AI call, no trade
-    for item in db.scalars(select(NewsItem).where(NewsItem.status.in_(("NEW", "ERROR", "TRIAGED")), NewsItem.published_at < fresh)):
-        item.status = "STALE"
-        stats["stale"] += 1
+    for item in db.scalars(select(NewsItem).where(NewsItem.status.in_(("NEW", "ERROR", "TRIAGED")), NewsItem.published_at >= oldest - timedelta(days=30))):
+        if item.published_at < oldest or is_stale(db, item.published_at, now):
+            item.status = "STALE"
+            stats["stale"] += 1
     db.commit()
     stats["stale"] += sum(i.status == "STALE" for i in new)
 

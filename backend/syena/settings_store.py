@@ -91,7 +91,10 @@ DEFAULTS: dict[str, Any] = {
         "short_selling": True,
         "max_items_per_run": 60,
         # News older than this (by its published time) is skipped: no AI call, no trade.
-        "max_age_minutes": 15,
+        "max_age_minutes": 120,  # news during market hours stays tradeable this long (never past the close)
+        "carry_after_hours": True,  # after-hours / overnight news stays valid until the next open
+        "carry_minutes_after_open": 15,  # ...until 09:30
+        "priced_in_pct": 2.0,  # skip a trade when the price already moved this much in its direction since the news
         # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
         "symbol_dedup_minutes": 60,
         "notify_holdings": True,  # Telegram message when news about a stock you own is analysed  # same stock analysed in the last hour: another source's copy, no second AI call

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from syena import __version__
 from syena.api import admin, algos, auth, compare, health, intel, logs, mode, portfolio, screener, stock, trading
 from syena.api import ask as ask_api
+from syena.api import patternlab as patternlab_api
 from syena.config import get_settings
 from syena.db import SessionLocal
 from syena.logging_setup import configure_logging
@@ -98,6 +99,7 @@ def create_app(run_startup: bool = True) -> FastAPI:
     app.include_router(compare.router)
     app.include_router(stock.router)
     app.include_router(ask_api.router)
+    app.include_router(patternlab_api.router)
     app.include_router(admin.router)
     app.include_router(admin.public_router)
 

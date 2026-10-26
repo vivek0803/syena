@@ -1,4 +1,5 @@
-"""Freshness (15 min), cross-source dedupe, Telegram channel scraping and image reading."""
+"""Freshness (2 h in market hours, after-hours news kept for the next open), dedupe, Telegram channels, images."""
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -40,16 +41,48 @@ def test_parse_telegram_channel_posts_with_images():
 
 
 def test_old_news_is_stale_and_never_reaches_ai(db, user, fake_llm, md):
-    stats = pipeline.run_cycle(db, md, fetch=lambda f: [raw("Infosys wins large multi-year deal", mins_ago=16)],
+    stats = pipeline.run_cycle(db, md, fetch=lambda f: [raw("Infosys wins large multi-year deal", mins_ago=60 * 24 * 5)],
                                broker_factory=pf, now=NOW)
     item = db.scalar(select(NewsItem))
     assert item.status == "STALE" and stats["triaged"] == 0 and not fake_llm.prompts
 
 
-def test_item_that_ages_past_15_minutes_while_waiting_is_skipped(db, user, fake_llm, md):
-    pipeline.ingest(db, [raw("Infosys wins large multi-year deal", mins_ago=10)], now=NOW)
-    stats = pipeline.run_cycle(db, md, fetch=lambda f: [], broker_factory=pf, now=NOW + timedelta(minutes=6))
-    assert stats["stale"] == 1 and not fake_llm.prompts
+def test_freshness_window():
+    from datetime import datetime as dt
+
+    from syena.market.calendar import IST
+
+    class DB:  # fresh_until only reads settings
+        pass
+
+    import syena.settings_store as ss
+    get = lambda db, k: ss._merge(ss.DEFAULTS[k], None)  # noqa: E731
+    orig, ss.get = ss.get, get
+    try:
+        wed_11 = dt(2026, 10, 21, 11, 0, tzinfo=IST)          # Wednesday, market open
+        assert pipeline.fresh_until(DB(), wed_11) == dt(2026, 10, 21, 13, 0, tzinfo=IST)  # 2 hours
+        wed_15 = dt(2026, 10, 21, 15, 0, tzinfo=IST)          # 2 hours would pass the close: next open instead
+        assert pipeline.fresh_until(DB(), wed_15) == dt(2026, 10, 22, 9, 30, tzinfo=IST)
+        wed_19 = dt(2026, 10, 21, 19, 30, tzinfo=IST)         # evening results: tradeable at the next open
+        assert pipeline.fresh_until(DB(), wed_19) == dt(2026, 10, 22, 9, 30, tzinfo=IST)
+        thu_8 = dt(2026, 10, 22, 8, 0, tzinfo=IST)            # early morning: today's open
+        assert pipeline.fresh_until(DB(), thu_8) == dt(2026, 10, 22, 9, 30, tzinfo=IST)
+        fri_20 = dt(2026, 10, 23, 20, 0, tzinfo=IST)          # Friday evening: Monday's open
+        assert pipeline.fresh_until(DB(), fri_20) == dt(2026, 10, 26, 9, 30, tzinfo=IST)
+    finally:
+        ss.get = orig
+
+
+def test_priced_in_check(db):
+    class MD:
+        def candles(self, sym, iv, start, end):
+            idx = pd.date_range("2026-10-21 04:00", periods=12, freq="5min", tz="UTC")
+            c = [100.0] * 6 + [103.0] * 6                     # jumped 3% after the news at 04:30
+            return pd.DataFrame({"open": c, "high": c, "low": c, "close": c, "volume": 1.0}, index=idx)
+    news_at = datetime(2026, 10, 21, 4, 30, tzinfo=timezone.utc)
+    ck = pipeline.priced_in_check(db, MD(), "INFY", news_at, news_at + timedelta(minutes=30), "BUY", 103.0)
+    assert not ck.passed and "+3.00%" in ck.detail
+    assert pipeline.priced_in_check(db, MD(), "INFY", news_at, news_at + timedelta(minutes=30), "SELL", 103.0).passed
 
 
 def test_same_story_from_several_sources_goes_to_ai_once(db, user):

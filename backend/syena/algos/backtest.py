@@ -46,12 +46,13 @@ def risk_levels(rule: dict, entry: float, atr_value: float, cfg: BacktestConfig)
     return level(rule.get("stop_loss"), cfg.default_stop_atr, -1), level(rule.get("target"), cfg.default_target_atr, +1)
 
 
-def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "") -> dict:
+def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "", cache: dict | None = None) -> dict:
     df = df.sort_index()
     if len(df) < 5:
         return {"metrics": _metrics([], [], cfg), "trades": [], "equity": [], "skipped": [], "bars": len(df)}
-    entry_sig = evaluate(df, rule["entry"]).to_numpy()
-    exit_sig = evaluate(df, rule["exit"]).to_numpy() if rule.get("exit") else np.zeros(len(df), bool)
+    cache = {} if cache is None else cache  # indicator values shared between rules on the same candles (pattern lab)
+    entry_sig = evaluate(df, rule["entry"], cache).to_numpy()
+    exit_sig = evaluate(df, rule["exit"], cache).to_numpy() if rule.get("exit") else np.zeros(len(df), bool)
     atr_s = ind.atr(df, (rule.get("stop_loss") or {}).get("n", 14)).to_numpy()
     o, h, l, c = (df[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
     times = df.index.tz_convert(IST)
