@@ -72,7 +72,7 @@ def test_process_symbol_places_paper_trade_with_full_record(db, user, fake_llm, 
     if d.type == DecisionType.PLACED:
         t = db.get(Trade, d.trade_id)
         assert t.news_item_ids == [item.id] and t.stop_loss < t.entry_price < t.target and t.auto_sell
-    assert db.scalar(select(AICall)).prompt_version == "v5"
+    assert db.scalar(select(AICall)).prompt_version == "v6"
 
 
 def test_low_confidence_rejected_with_exact_check(db, user, fake_llm, md):
@@ -411,3 +411,15 @@ def test_cached_prompt_tokens_cost_a_tenth(db):
     full = llm.cost(db, "claude-sonnet-5-5", 10_000, 500)
     cached = llm.cost(db, "claude-sonnet-5-5", 2_000, 500, cache_read=8_000)
     assert cached < full * 0.5
+
+
+def test_day_move_check_blocks_chasing(db):
+    class MD:
+        def candles(self, sym, iv, start, end):
+            idx = pd.DatetimeIndex(["2026-10-22 03:45", "2026-10-23 03:45", "2026-10-26 03:45"], tz="UTC")
+            return pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": [1400.0, 1388.0, 1584.0], "volume": 1.0}, index=idx)
+    now = datetime(2026, 10, 26, 9, 40, tzinfo=timezone.utc)   # 15:10 IST, after a 14% rally
+    ck = pipeline.day_move_check(db, MD(), "ATHERENERG", now, "BUY", 1584.4)
+    assert not ck.passed and "+14.15%" in ck.detail and "too late" in ck.detail
+    assert pipeline.day_move_check(db, MD(), "ATHERENERG", now, "BUY", 1420.0).passed     # +2.3%: fine
+    assert pipeline.day_move_check(db, MD(), "ATHERENERG", now, "SELL", 1584.4).passed    # a short isn't chasing a rally

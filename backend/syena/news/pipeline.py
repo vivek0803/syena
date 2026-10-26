@@ -415,6 +415,34 @@ def priced_in_check(db: Session, md, symbol: str, published: datetime, now: date
                  + ("" if ok else f": already moved {limit:g}%+ in the trade's direction, the news is priced in"))
 
 
+def day_move_check(db: Session, md, symbol: str, now: datetime, action: str, price: float | None) -> Check:
+    """Don't chase: if the stock is already up (for a buy) or down (for a short) more than max_day_move_pct since the
+    previous close, the move has happened, whatever the article's timestamp. Catches articles that report a rally
+    ('shares zoom 18% on results') which the priced-in check can't, because the jump came before the article."""
+    from syena.market import calendar as cal
+
+    limit = float(settings_store.get(db, "news").get("max_day_move_pct") or 0)
+    if not limit or not price:
+        return Check("day_move", True, "check off" if not limit else "no price")
+    try:
+        daily = md.candles(symbol, "day", now - timedelta(days=10), now)
+    except Exception:
+        daily = None
+    if daily is None or not len(daily):
+        return Check("day_move", True, "previous close unknown")
+    today = cal.to_ist(now).date()
+    idx = daily.index.tz_convert(cal.IST) if daily.index.tz is not None else daily.index
+    before = daily[[d.date() < today for d in idx]]
+    if not len(before):
+        return Check("day_move", True, "previous close unknown")
+    prev = float(before["close"].iloc[-1])
+    move = (price / prev - 1) * 100 if prev else 0.0
+    against = move if action == "BUY" else -move
+    ok = against < limit
+    return Check("day_move", ok, f"{move:+.2f}% since the previous close (₹{prev:,.2f})"
+                 + ("" if ok else f": already moved {limit:g}%+ today in the trade's direction, too late to chase"))
+
+
 def holding_news_alert(db: Session, symbol: str, a: dict, mine: dict) -> None:
     """Telegram message when news about something you own has been analysed, whatever Syena decides to trade."""
     from syena.config import get_settings
@@ -574,6 +602,7 @@ def process_symbol(db: Session, symbol: str, items: list[NewsItem], md, event_ty
         return sig
     checks = gate_checks(db, a, conf_after) + consult.checks
     checks.append(priced_in_check(db, md, symbol, min(i.published_at for i in items), now, a["action"], a["price"]))
+    checks.append(day_move_check(db, md, symbol, now, a["action"], a["price"]))
     base_intent["confidence"] = a["weighted_score"]  # what the threshold was compared with
     base_intent["reasoning"] = {**base_intent["reasoning"], "weighted_score": a["weighted_score"], "score_breakdown": a["score_breakdown"]}
     so = second_opinion(db, symbol, items, md, now, a) if a["action"] in ("BUY", "SELL") else None

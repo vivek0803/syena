@@ -9,6 +9,7 @@ import { useAct, useApi } from "../lib/hooks";
 // what happened to each big mover, best outcome first
 const CLS: Record<string, { label: string; dot: string; text: string }> = {
   traded_right: { label: "Traded right", dot: "bg-gain", text: "text-gain" },
+  traded_late: { label: "Traded late", dot: "bg-[#8FD9B6]", text: "text-[#8FD9B6]" },
   rejected: { label: "Caught, rejected", dot: "bg-saffron", text: "text-saffron" },
   misread: { label: "AI misread", dot: "bg-[#A98BF5]", text: "text-[#A98BF5]" },
   traded_wrong: { label: "Traded wrong way", dot: "bg-loss", text: "text-loss" },
@@ -56,7 +57,7 @@ export default function Review() {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <div className="text-[13px] text-mute">{r.day}: movers of ±{r.min_move_pct}% or more, market cap ₹{Number(r.min_market_cap_cr).toLocaleString("en-IN")} Cr+</div>
-              <div className="num mt-1 text-[34px] font-semibold leading-tight">{(r.counts.traded_right ?? 0)} of {r.gainers.length + r.losers.length} <span className="text-[17px] font-normal text-parch-dim">big moves traded the right way</span></div>
+              <div className="num mt-1 text-[34px] font-semibold leading-tight">{(r.counts.traded_right ?? 0)} of {r.gainers.length + r.losers.length} <span className="text-[17px] font-normal text-parch-dim">big moves traded the right way, in time</span></div>
             </div>
             <div className="text-right text-[13px] text-mute">Median stock {r.market_median_pct > 0 ? "+" : ""}{r.market_median_pct}% of {r.stocks_priced}</div>
           </div>
@@ -66,6 +67,9 @@ export default function Review() {
         </section>
         {r.lessons && <Panel title="What to fix" icon={<Lightbulb size={17} />}>
           <div className="space-y-1.5 text-[15px] text-parch-dim">{r.lessons.split("\n").filter((l: string) => l.trim()).map((l: string, i: number) => <p key={i}>{l.replace(/^\s*[-•]\s*/, "• ")}</p>)}</div>
+          {r.learning?.evidence > 0 && <p className="mt-3 border-t border-dusk-line/70 pt-3 text-[13px] text-mute">
+            Fed to learning: {r.learning.evidence} piece{r.learning.evidence === 1 ? "" : "s"} of evidence for lesson{r.learning.lessons.length === 1 ? "" : "s"} {r.learning.lessons.join(", ")}.
+            Lessons switch on only after enough evidence across several days, a test on later data and your approval on the <Link to="/learning" className="text-saffron hover:underline">Learning page</Link>.</p>}
         </Panel>}
         <div className="grid gap-6 lg:grid-cols-2">
           <Panel title={`Top gainers (${r.gainers.length})`} icon={<ArrowUpRight size={17} />}>{!r.gainers.length ? <p className="text-parch-dim">No stock rose that much.</p> : <ul className="space-y-2.5">{r.gainers.map((m: any) => <Mover key={m.symbol} m={m} up />)}</ul>}</Panel>

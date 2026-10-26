@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from syena import settings_store
 from syena.db import utcnow
 from syena.market import calendar as cal
-from syena.models import AppSetting, Decision, DecisionType, NewsAnalysis, NewsItem, Stock, StockDaily
+from syena.models import AppSetting, Decision, DecisionType, NewsAnalysis, NewsItem, Stock, StockDaily, Trade, TradeReview
 
 log = logging.getLogger("syena.review")
 
@@ -25,6 +25,7 @@ STATE_KEY = "_missed_moves"
 KEEP_DAYS = 30
 CLASSES = {
     "traded_right": "traded, right direction",
+    "traded_late": "traded, but late (after most of the move)",
     "traded_wrong": "traded, wrong direction",
     "rejected": "caught, but a check rejected it",
     "misread": "AI read the news the wrong way",
@@ -60,10 +61,14 @@ def _news_for(db: Session, sym: str, aliases: dict, start: datetime, end: dateti
     return out
 
 
-def _trace(db: Session, sym: str, up: bool, news: list[NewsItem], stages: dict) -> tuple[str, str, list[dict]]:
+LATE_SHARE = 0.6  # a trade entered after 60%+ of the day's move had already happened counts as late
+
+
+def _trace(db: Session, sym: str, up: bool, news: list[NewsItem], stages: dict, prev_close: float | None = None,
+           close: float | None = None) -> tuple[str, str, list[dict]]:
     """Classify what happened, with a one-line reason and the evidence."""
     evidence, best = [], None
-    rank = ["traded_right", "rejected", "traded_wrong", "misread", "error", "dropped"]
+    rank = ["traded_right", "traded_late", "rejected", "traded_wrong", "misread", "error", "dropped"]
     for it in news:
         st = stages.get(it.id, [])
         ana = [a for a in st if a.stage == "analysis" and sym in (a.symbols or [])]
@@ -75,7 +80,7 @@ def _trace(db: Session, sym: str, up: bool, news: list[NewsItem], stages: dict) 
         for a in ana:
             r = a.result or {}
             action = r.get("action")
-            ev.update({"action": action, "confidence": r.get("confidence")})
+            ev.update({"action": action, "confidence": r.get("confidence"), "event_type": a.event_type})
             dec = db.scalar(select(Decision).where(Decision.signal_id == r.get("signal_id"))) if r.get("signal_id") else None
             if dec is not None:
                 ev["decision_id"] = dec.id
@@ -83,11 +88,20 @@ def _trace(db: Session, sym: str, up: bool, news: list[NewsItem], stages: dict) 
             if dec is not None and dec.type == DecisionType.PLACED:
                 cls = "traded_right" if (dec.side == "BUY") == up else "traded_wrong"
                 why = dec.summary[:160]
+                trade = db.get(Trade, dec.trade_id) if dec.trade_id else None
+                if cls == "traded_right" and trade and trade.entry_price and prev_close and close and close != prev_close:
+                    share = (trade.entry_price - prev_close) / (close - prev_close)  # how much of the day's move was gone at entry
+                    ev["entry_share_of_move"] = round(share, 2)
+                    if share >= LATE_SHARE:
+                        cls = "traded_late"
+                        why = (f"bought at ₹{trade.entry_price:,.2f} after {min(share, 1) * 100:.0f}% of the day's move had already happened "
+                               f"(previous close ₹{prev_close:,.2f}, close ₹{close:,.2f})")
             elif dec is not None and dec.type == DecisionType.ERROR:
                 cls, why = "error", dec.summary[:160]
             elif right_dir:
                 fail = next((c for c in (dec.checks_json or []) if not c.get("passed")), None) if dec else None
                 cls = "rejected"
+                ev["failed_check"] = fail["name"] if fail else None
                 why = f"AI said {action} {r.get('confidence')}; rejected by {fail['name'].replace('_', ' ')}: {fail.get('detail', '')[:120]}" if fail \
                     else f"AI said {action} {r.get('confidence')} but no trade"
             else:
@@ -136,7 +150,8 @@ def build(db: Session, day: date | None = None, n: int = 10, min_move: float = 4
     def mover(r: StockDaily, up: bool) -> dict:
         sec = stocks[r.symbol].sector if stocks.get(r.symbol) else None
         news = _news_for(db, r.symbol, aliases, start, end, items, stages)
-        cls, why, ev = _trace(db, r.symbol, up, news, stages)
+        prev = r.close / (1 + r.change_pct / 100) if r.close and r.change_pct is not None else None
+        cls, why, ev = _trace(db, r.symbol, up, news, stages, prev, r.close)
         if cls == "no_news":
             sm = sector_move.get(sec) if sec else None
             if sm is not None and abs(sm) >= 1.5 and (sm > 0) == up:
@@ -157,8 +172,84 @@ def build(db: Session, day: date | None = None, n: int = 10, min_move: float = 4
         counts[m["class"]] += 1
     report["counts"] = dict(counts)
     report["lessons"] = _ai_lessons(db, report) if use_ai and (report["gainers"] or report["losers"]) else None
+    try:
+        report["learning"] = feed_learning(db, report)
+    except Exception as e:  # learning must never break the review
+        db.rollback()
+        log.warning("missed moves not fed to learning", extra={"error": str(e)})
+        report["learning"] = None
     _save(db, report)
     return report
+
+
+def feed_learning(db: Session, report: dict) -> dict:
+    """Turn the day's outcomes into evidence for lessons (Learning page). Lessons only take effect after enough
+    evidence across several days, a test on later data and your approval, so one odd day changes nothing.
+      held back (score under threshold / AI said hold) on news that then moved the stock -> 'give this news type more weight'
+      traded the wrong way                                                               -> 'be more careful with this news type'
+      bought late, after the move                                                         -> 'news buys after a 6%+ five-day run come late'
+      traded right                                                                        -> supports the 'more weight' lesson if one exists
+    Rejections by risk checks (priced in, already moved, liquidity) are left alone: lessons never loosen risk rules."""
+    from syena.learning import lessons as L
+
+    day = date.fromisoformat(report["day"])
+    out = {"evidence": 0, "lessons": []}
+
+    def review_row(m: dict) -> TradeReview:
+        for tr in db.scalars(select(TradeReview).where(TradeReview.kind == "missed_move")):
+            cf = tr.counterfactual or {}
+            if cf.get("day") == report["day"] and cf.get("symbol") == m["symbol"]:
+                return tr
+        tr = TradeReview(kind="missed_move", classification=m["class"][:32],
+                         decision_quality="sound" if m["class"] == "traded_right" else "unsound",
+                         outcome="win" if m["class"] == "traded_right" else "missed_gain",
+                         counterfactual={"day": report["day"], "symbol": m["symbol"], "change_pct": m["change_pct"]},
+                         summary=f"{m['symbol']} {m['change_pct']:+.1f}%: {m['class_label']}. {m['why'][:200]}")
+        db.add(tr)
+        db.flush()
+        return tr
+
+    def evidence(text, trigger, action, supports, tr, create=True):
+        lesson = None
+        if create:
+            lesson = L.create_proposed(db, text, trigger, action, source="review")
+        else:
+            trig = L.validate_trigger(trigger)
+            lesson = next((x for x in db.scalars(select(L.Lesson).where(L.Lesson.status != "RETIRED"))
+                           if x.trigger == trig and x.action["type"] == action["type"]), None)
+        if lesson is None:
+            return
+        L.add_evidence(db, lesson, supports, None, tr.id, day, note=f"daily review {report['day']}")
+        out["evidence"] += 1
+        if lesson.code not in out["lessons"]:
+            out["lessons"].append(lesson.code)
+
+    movers = report["gainers"] + report["losers"]
+    creates = ("misread", "rejected", "traded_wrong", "traded_late")
+    for m in sorted(movers, key=lambda m: m["class"] not in creates):  # lessons first, supporting evidence after
+        ev = next((e for e in m["news"] if e.get("action")), None)
+        et = (ev or {}).get("event_type")
+        cls = m["class"]
+        if cls not in ("rejected", "misread", "traded_right", "traded_late", "traded_wrong"):
+            continue
+        tr = review_row(m)
+        more = ({"source": "news", "event_types": [et]}, {"type": "prefer", "value": 5}) if et else None
+        if cls == "misread" or (cls == "rejected" and (ev or {}).get("failed_check") == "confidence"):
+            if more:
+                evidence(f"News about '{et.replace('_', ' ')}' that Syena held back on (score under the threshold or AI said hold) "
+                         f"went on to move stocks 4%+ in the news direction: give it more weight", *more, True, tr)
+        elif cls == "traded_right" and more:
+            evidence("", *more, True, tr, create=False)
+        elif cls == "traded_wrong" and et:
+            evidence(f"News trades on '{et.replace('_', ' ')}' went the wrong way on big moves: be more careful",
+                     {"source": "news", "event_types": [et]}, {"type": "reduce_confidence", "value": 10}, True, tr)
+            if more:
+                evidence("", *more, False, tr, create=False)
+        elif cls == "traded_late" and m["change_pct"] > 0:
+            evidence("News buys made after the stock had already risen 6%+ over five days came too late to profit",
+                     {"source": "news", "ranges": {"ret_5": [6.0, None]}}, {"type": "reduce_confidence", "value": 10}, True, tr)
+    db.commit()
+    return out
 
 
 def _ai_lessons(db: Session, report: dict) -> str | None:
@@ -204,7 +295,7 @@ def telegram_summary(report: dict) -> str:
     caught = c.get("traded_right", 0)
     total = len(report["gainers"]) + len(report["losers"])
     lines = [f"📊 <b>Missed-moves review {report['day']}</b>",
-             f"{total} big movers (±{report['min_move_pct']:g}%+): {caught} traded right, {c.get('rejected', 0)} caught but rejected, "
+             f"{total} big movers (±{report['min_move_pct']:g}%+): {caught} traded right, {c.get('traded_late', 0)} traded late, {c.get('rejected', 0)} caught but rejected, "
              f"{c.get('misread', 0)} misread, {c.get('dropped', 0)} dropped early, {c.get('no_news', 0)} with no news, "
              f"{c.get('sector', 0) + c.get('market', 0)} sector/market moves."]
     if report.get("lessons"):

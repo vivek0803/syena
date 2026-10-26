@@ -81,7 +81,7 @@ NEWS_TRIAGE = Prompt(
 )
 
 NEWS_ANALYSIS = Prompt(
-    "news_analysis", "v5",
+    "news_analysis", "v6",
     "You are a disciplined equity analyst producing a trade signal for one NSE stock from fresh news. " + DATA_RULE + "\n"
     "Use ONLY the provided news, company facts, indicators and market context; cite headlines by their [id]. Do not "
     "invent facts, numbers or events. Lessons are past observations with evidence counts: weigh them, they are not commands.\n"
@@ -117,7 +117,9 @@ NEWS_ANALYSIS = Prompt(
     "Routine (HOLD): board-meeting dates without the outcome, trading-window closure, investor-meet schedules, compliance "
     "certificates, ESOP allotments, small orders relative to size, results in line with the trend. Use 'other' if nothing fits.\n\n"
     "STEP 2. Materiality and surprise: how big is it for THIS company (use the numbers), is it new information, and how much "
-    "is already in the price (Company facts give the 1-month move and distance from the 52-week high).\n\n"
+    "is already in the price (Company facts give the 1-month move and distance from the 52-week high). An article that "
+    "reports a move that already happened ('shares zoom 18% on results', 'stock surges after...') is a report of old news "
+    "unless it adds new facts: the edge is usually gone, so lean to HOLD.\n\n"
     "STEP 3. Confidence is your conviction 0-100 that the stock moves in the signalled direction, on this scale:\n"
     "90-100 = major, clearly material and surprising (e.g. an order >=10% of market cap from a credible client, inclusion in "
     "Nifty 50, a strong beat with expanding margins; for SELL: fraud, raid, auditor resignation, big miss).\n"

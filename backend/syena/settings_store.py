@@ -96,7 +96,8 @@ DEFAULTS: dict[str, Any] = {
         "max_age_minutes": 120,  # news during market hours stays tradeable this long (never past the close)
         "carry_after_hours": True,  # after-hours / overnight news stays valid until the next open
         "carry_minutes_after_open": 15,  # ...until 09:30
-        "priced_in_pct": 2.0,  # skip a trade when the price already moved this much in its direction since the news
+        "priced_in_pct": 2.0,
+        "max_day_move_pct": 5.0,  # don't chase: no news buy if already up this much today (or short if down)  # skip a trade when the price already moved this much in its direction since the news
         # Same stock + same kind of event already analysed within this window -> later reports are duplicates.
         "symbol_dedup_minutes": 60,
         "notify_holdings": True,

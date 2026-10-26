@@ -156,7 +156,8 @@ const checkNames: Record<string, string> = {
   per_stock_exposure: "Per-stock exposure", circuit_limit: "Circuit limit", signal_action: "Signal", confidence: "Confidence",
   technicals: "Technicals agree", market_context: "Market context", second_opinion: "Second opinion", broker: "Broker",
   rule_signal: "Rule fired", backtest_trades: "Backtest trades", backtest_win_rate: "Backtest win rate", backtest_sharpe: "Backtest Sharpe",
-  backtest_drawdown: "Backtest drawdown", paper_trades: "Paper trades", paper_days: "Paper trading days", paper_vs_backtest: "Paper vs backtest", you_confirmed: "Your confirmation", entry_range: "Entry range", exit_reason: "Exit reason", price: "Live price",
+  backtest_drawdown: "Backtest drawdown", paper_trades: "Paper trades", paper_days: "Paper trading days", paper_vs_backtest: "Paper vs backtest", you_confirmed: "Your confirmation", entry_range: "Entry range", exit_reason: "Exit reason", price: "Live price", priced_in: "Not priced in yet", day_move: "Not chasing a move", liquidity: "Liquidity", reward_risk: "Reward vs risk",
+  ai_verdict: "AI verdict", own_holding: "You own it", short_selling: "Short selling",
 };
 export const checkLabel = (n: string) => (n.startsWith("lesson:") ? `Lesson ${n.slice(7)}` : n.startsWith("plan:") ? `Plan: ${n.slice(5)}` : checkNames[n] ?? n);
 
