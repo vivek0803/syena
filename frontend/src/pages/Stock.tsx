@@ -120,6 +120,7 @@ function StockView({ symbol }: { symbol: string }) {
           <div className="space-y-6">
             <Panel title="Key figures"><Figures m={m} rsi={chart.data?.rsi?.at(-1)?.v} /></Panel>
             <LevelsPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
+            <ZoneSetupPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
             <VerifyPanel symbol={symbol} />
             <PatternPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
             {info.data?.trades?.length > 0 && <Panel title="Trades">
@@ -163,6 +164,45 @@ function LevelsPanel({ data, label }: { data: any; label: string }) {
       </ul>
       {!lv.resistances?.length && !lv.supports?.length && <p className="text-sm text-parch-dim">Not enough swings on these candles to find zones: try a longer range.</p>}
       <p className="mt-3 text-[12px] text-mute">Zones are where several swing highs/lows cluster. Stronger with more touches, bigger bounces, a support-resistance flip and a matching level on the {data.interval === "day" ? "weekly" : "daily"} chart. HH/HL = higher high/low, LH/LL = lower, EH/EL = about equal. In algos: “buy when price bounces off support”, “buy when close breaks above resistance”.</p>
+    </Panel>
+  );
+}
+
+function ZoneSetupPanel({ data, label }: { data: any; label: string }) {
+  const z = data?.zone_setup;
+  if (!z?.available) return null;
+  const bull = z.bias?.startsWith("bullish"), htfBull = z.htf_bias?.startsWith("bullish");
+  return (
+    <Panel title="Zone retest setup" aside={<span className="text-[12px] text-mute">Umar Punjabi method · {label}</span>}>
+      <div className="space-y-1 text-sm">
+        <p><span className="text-mute">Bias:</span> <b className={bull ? "text-gain" : z.bias?.startsWith("bearish") ? "text-loss" : "text-parch"}>{z.bias}</b></p>
+        {z.htf_bias && <p><span className="text-mute">Higher timeframe:</span> <span className={htfBull ? "text-gain" : z.htf_bias.startsWith("bearish") ? "text-loss" : "text-parch-dim"}>{z.htf_bias}</span></p>}
+      </div>
+      {z.fired_today ? (
+        <div className="mt-3 rounded-lg border border-gain/40 bg-gain-soft/20 p-3 text-sm">
+          <b className="text-gain">Setup on the latest candle</b>
+          <p className="mt-1 text-parch-dim">Stop ₹{n(z.stop)} · target ₹{n(z.target)} · 1:{z.rr}</p>
+          <p className="mt-1 text-[12px] text-mute">{z.why}</p>
+        </div>
+      ) : z.waiting_zones?.length ? (
+        <div className="mt-3 text-sm">
+          <p className="text-mute">Demand zones it waits for price to return to:</p>
+          <ul className="mt-1 space-y-1">{z.waiting_zones.map((w: any, i: number) => (
+            <li key={i} className="flex items-baseline gap-2">
+              <span className="tabular-nums">₹{n(w.low)} – {n(w.high)}</span>
+              <span className="text-[12px] text-mute">{w.kind === "flip" ? "old resistance, now support" : "origin of a strong move"}{w.visits ? ` · ${w.visits} retest${w.visits > 1 ? "s" : ""}` : " · untested"}</span>
+              <span className="ml-auto text-[12px] tabular-nums text-mute">{w.distance_pct}%</span>
+            </li>))}</ul>
+        </div>
+      ) : <p className="mt-3 text-sm text-parch-dim">No fresh demand zone below price right now.</p>}
+      {z.recent?.length > 0 && (
+        <details className="mt-3 text-[13px]">
+          <summary className="cursor-pointer text-parch-dim">Last {z.recent.length} setups on this chart</summary>
+          <ul className="mt-2 space-y-2">{[...z.recent].reverse().map((r: any) => (
+            <li key={r.ts}><span className="text-parch">{when(r.ts)}</span> <span className="text-mute">stop ₹{n(r.stop)} · target ₹{n(r.target)} · 1:{r.rr}</span>
+              <p className="text-[12px] text-mute">{r.why}</p></li>))}</ul>
+        </details>)}
+      <p className="mt-3 text-[12px] text-mute">Buys only when structure is bullish, price is back in a strong demand zone (where a move that broke structure started, or broken resistance), and a bullish candle confirms. Stop beyond the zone, target the next strong resistance, at least 1:2. Test it on the Pattern lab page.</p>
     </Panel>
   );
 }

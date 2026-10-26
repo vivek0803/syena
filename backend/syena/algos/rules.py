@@ -6,6 +6,7 @@ import pandas as pd
 from syena.algos import indicators as ind
 from syena.algos import levels as lv
 from syena.algos import patterns as pat
+from syena.algos import zonetrade as zt
 
 # name -> (param defaults in canonical order, outputs or None for single series, warmup multiplier key)
 INDICATORS: dict[str, dict[str, Any]] = {
@@ -121,6 +122,13 @@ def canon_node(n: dict) -> dict:
         if name not in pat.PATTERNS:
             raise RuleError(f"unknown candlestick pattern {name!r}. Supported: " + ", ".join(pat.PATTERNS))
         return {"op": "pattern", "name": name}
+    if op == "strategy":  # a built-in multi-step strategy fires on this bar (with its own stop and target)
+        if n.get("name") != zt.NAME:
+            raise RuleError(f"unknown strategy {n.get('name')!r}. Supported: {zt.NAME}")
+        try:
+            return {"op": "strategy", "name": zt.NAME, "params": zt.canon_params(n.get("params"))}
+        except ValueError as e:
+            raise RuleError(str(e))
     raise RuleError(f"unknown op {op!r}")
 
 
@@ -147,14 +155,44 @@ def canon_risk(r: dict | None) -> dict | None:
         if not 0 < m <= 20:
             raise RuleError("ATR multiple must be between 0 and 20")
         return {"type": "atr", "mult": m, "n": int(r.get("n", 14))}
+    if t == "strategy":  # stop / target come from the strategy node (beyond the zone / next opposite zone)
+        return {"type": "strategy"}
     raise RuleError(f"bad stop/target {r!r}")
+
+
+def strategy_node(node: dict | None) -> dict | None:
+    """The strategy node inside an entry condition, if any."""
+    if not node:
+        return None
+    if node["op"] == "strategy":
+        return node
+    if node["op"] in BOOL_OPS:
+        for a in node["args"]:
+            f = strategy_node(a)
+            if f:
+                return f
+    if node["op"] == "not":
+        return None
+    return None
+
+
+def strategy_frame(df: pd.DataFrame, node: dict, cache: dict | None = None) -> pd.DataFrame:
+    cache = {} if cache is None else cache
+    key = f"strategy:{node['name']}:{sorted(node['params'].items())}"
+    if key not in cache:
+        cache[key] = zt.signals(df, node["params"])
+    return cache[key]
 
 
 def canon_rule(rule: dict) -> dict:
     if rule.get("side", "BUY") != "BUY":
         raise RuleError("only long (BUY) rules are supported")
+    entry = canon_node(rule["entry"])
+    uses = [r for r in (rule.get("stop_loss"), rule.get("target")) if r and r.get("type") == "strategy"]
+    if uses and not strategy_node(entry):
+        raise RuleError("a strategy stop/target needs a strategy entry condition")
     return {
-        "entry": canon_node(rule["entry"]),
+        "entry": entry,
         "exit": canon_node(rule["exit"]) if rule.get("exit") else None,
         "side": "BUY",
         "stop_loss": canon_risk(rule.get("stop_loss")),
@@ -255,11 +293,13 @@ def evaluate(df: pd.DataFrame, node: dict, cache: dict | None = None) -> pd.Seri
         if key not in cache:
             cache[key] = pat.detect(df, node["name"])
         return cache[key]
+    if op == "strategy":
+        return strategy_frame(df, node, cache)["signal"].astype(bool)
     raise RuleError(op)
 
 
 def operands(node: dict) -> list[dict]:
-    if node["op"] == "pattern":
+    if node["op"] in ("pattern", "strategy"):
         return []
     if node["op"] in ("compare", *CROSS_OPS):
         return [node["left"], node["right"]]
@@ -276,6 +316,8 @@ def warmup_bars(rule: dict) -> int:
         for o in operands(node):
             if o["kind"] == "indicator":
                 longest = max(longest, *[int(v) for k, v in o["params"].items() if k in LOOKBACK_PARAMS] or [1])
+    if strategy_node(rule["entry"]):
+        longest = max(longest, 130)  # zones are built from ~250 candles; 400 bars of history
     return longest * 3 + 10
 
 
@@ -354,12 +396,18 @@ def describe(node: dict | None) -> str:
     if op == "pattern":
         label = pat.PATTERNS[node["name"]][0]
         return label if node["name"].startswith("any_") else f"{label} candle pattern"
+    if op == "strategy":
+        return zt.describe(node["params"])
     return f"NOT {describe(node['arg'])}"
 
 
-def describe_risk(r: dict | None, label: str, default: str) -> str:
+def describe_risk(r: dict | None, label: str, default: str, strategy: dict | None = None) -> str:
     if not r:
         return f"{label}: default ({default})"
+    if r["type"] == "strategy":
+        p = (strategy or {}).get("params") or zt.DEFAULTS
+        return f"{label}: " + ("just beyond the demand zone and the confirmation candle's low" if label.startswith("Stop")
+                               else zt.describe_target(p))
     return f"{label}: {r['value']:g}%" if r["type"] == "pct" else f"{label}: {r['mult']:g} × ATR({r.get('n', 14)})"
 
 
@@ -367,6 +415,7 @@ def describe_rule(rule: dict) -> str:
     lines = [f"BUY when {describe(rule['entry'])}"]
     if rule.get("exit"):
         lines.append(f"SELL when {describe(rule['exit'])}")
-    lines.append(describe_risk(rule.get("stop_loss"), "Stop-loss", "ATR-based"))
-    lines.append(describe_risk(rule.get("target"), "Target", "ATR-based"))
+    st = strategy_node(rule["entry"])
+    lines.append(describe_risk(rule.get("stop_loss"), "Stop-loss", "ATR-based", st))
+    lines.append(describe_risk(rule.get("target"), "Target", "ATR-based", st))
     return "\n".join(lines)

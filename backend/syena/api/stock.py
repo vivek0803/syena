@@ -115,10 +115,20 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
         "month_summary": pat.summary(df, since=df.index[-1] - timedelta(days=30)),
         "corporate_actions": actions,
         "levels": lv.levels_payload(df, interval),
+        "zone_setup": _zone_setup(df),
         "trendlines": [{"kind": sg["kind"], "slope_pct_per_bar": sg["slope_pct_per_bar"],
                         "points": [{"t": t(ts), "v": round(v, 2)} for ts, v in sg["points"]]}
                        for sg in pat.trendline_segments(view if len(view) > 20 else df, n=min(len(view), 120))],
     }
+
+
+def _zone_setup(df) -> dict:
+    from syena.algos import zonetrade
+
+    try:
+        return zonetrade.current_setup(df)
+    except Exception:  # an explanation panel must never break the chart
+        return {"available": False}
 
 
 def _interval_options(range_: str) -> list[dict]:

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from syena.algos import indicators as ind
-from syena.algos.rules import evaluate
+from syena.algos.rules import evaluate, strategy_frame, strategy_node
 from syena.execution.sizing import size_position
 from syena.market.calendar import IST, parse_hhmm
 from syena.market.charges import round_trip
@@ -35,6 +35,8 @@ class BacktestConfig:
 
 def risk_levels(rule: dict, entry: float, atr_value: float, cfg: BacktestConfig) -> tuple[float | None, float | None]:
     def level(spec, default_mult, sign):
+        if spec is not None and spec["type"] == "strategy":
+            return None  # filled in from the strategy's own levels by the caller
         if spec is None:
             spec = {"type": "atr", "mult": default_mult}
         if spec["type"] == "pct":
@@ -54,6 +56,10 @@ def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "", cac
     entry_sig = evaluate(df, rule["entry"], cache).to_numpy()
     exit_sig = evaluate(df, rule["exit"], cache).to_numpy() if rule.get("exit") else np.zeros(len(df), bool)
     atr_s = ind.atr(df, (rule.get("stop_loss") or {}).get("n", 14)).to_numpy()
+    st_node = strategy_node(rule["entry"])
+    st = strategy_frame(df, st_node, cache) if st_node else None
+    st_stop = st["stop"].to_numpy(float) if st is not None else None
+    st_target = st["target"].to_numpy(float) if st is not None else None
     o, h, l, c = (df[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
     times = df.index.tz_convert(IST)
     intraday = cfg.style == "INTRADAY"
@@ -82,8 +88,16 @@ def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "", cac
                 skipped.append({"ts": t.isoformat(), "reason": "after intraday cutoff"})
             else:
                 stop, target = risk_levels(rule, px, atr_s[i - 1] if i > 0 else np.nan, cfg)
-                pos = {"entry_ts": t, "entry": px, "qty": sz.qty, "stop": stop, "target": target, "entry_i": i}
-                cash -= px * sz.qty
+                if st is not None and i > 0:
+                    if (rule.get("stop_loss") or {}).get("type") == "strategy":
+                        stop = st_stop[i - 1]
+                    if (rule.get("target") or {}).get("type") == "strategy":
+                        target = st_target[i - 1]
+                if (stop is not None and px <= stop) or (target is not None and px >= target):
+                    skipped.append({"ts": t.isoformat(), "reason": "opened beyond the planned stop/target"})
+                else:
+                    pos = {"entry_ts": t, "entry": px, "qty": sz.qty, "stop": stop, "target": target, "entry_i": i}
+                    cash -= px * sz.qty
         # 2) intrabar stop / target on an open position
         if pos:
             hit = None

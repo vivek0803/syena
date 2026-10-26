@@ -69,3 +69,63 @@ def make_algo(body: AlgoIn, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"algo_id": algo.id, "name": algo.name, "readable": readable, "symbols": len(syms)}
+
+
+# ---------------------------------------------------------------- zone retest strategy (Umar Punjabi method)
+_sjob: dict = {"status": None}
+
+
+@router.get("/strategy")
+def get_strategy_lab(db: Session = Depends(get_db)):
+    from syena.algos import strategylab
+
+    return {"latest": strategylab.latest(db), "job": _sjob,
+            "progress": strategylab.progress() if _sjob.get("status") == "running" else None,
+            "variants": {k: v[0] for k, v in strategylab.VARIANTS.items()}}
+
+
+@router.post("/strategy/run")
+def run_strategy_lab(body: RunIn, db: Session = Depends(get_db)):
+    from syena.algos import strategylab
+    from syena.market import source
+
+    if _sjob.get("status") == "running":
+        raise HTTPException(409, "the strategy test is already running")
+    if not 2 <= body.years <= 10:
+        raise HTTPException(400, "years must be 2-10")
+    try:
+        source.get_market_data(db)
+    except Exception as e:
+        raise HTTPException(409, f"Price data isn't connected: {e}")
+
+    def work():
+        _sjob.update({"status": "running", "error": None})
+        try:
+            with SessionLocal() as s:
+                out = strategylab.run(s, source.get_market_data(s), body.universe, body.years)
+            _sjob.update({"status": "done", "winners": out["winners"]})
+        except Exception as e:
+            _sjob.update({"status": "failed", "error": str(e)[:300]})
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"started": True}
+
+
+class StrategyAlgoIn(BaseModel):
+    variant: str
+
+
+@router.post("/strategy/algo")
+def make_strategy_algo(body: StrategyAlgoIn, db: Session = Depends(get_db)):
+    from syena.algos import strategylab
+    from syena.screener import lists
+
+    if body.variant not in strategylab.VARIANTS:
+        raise HTTPException(400, "unknown version")
+    lab = strategylab.latest(db) or {}
+    try:
+        syms = lists.index_members(db, lab.get("universe", "nifty200"))
+        algo, readable = strategylab.create_algo(db, body.variant, syms)
+    except (ValueError, lists.ListError) as e:
+        raise HTTPException(400, str(e))
+    return {"algo_id": algo.id, "name": algo.name, "readable": readable, "symbols": len(syms)}

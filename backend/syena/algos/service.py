@@ -142,13 +142,33 @@ def enable_live(db: Session, algo: Algo) -> Algo:
 def _risk_prices(rule: dict, df: pd.DataFrame, entry: float, style: Style, db: Session, stop_factor: float) -> tuple[float, float]:
     cfg = backtest_config(db, style)
     a = float(ind.atr(df, 14).iloc[-1])
+    from syena.algos.rules import strategy_frame, strategy_node
+
+    st_node = strategy_node(rule.get("entry"))
+    st = strategy_frame(df, st_node).iloc[-1] if st_node else None
 
     def lvl(spec, default_mult, sign, factor=1.0):
         spec = spec or {"type": "atr", "mult": default_mult}
+        if spec["type"] == "strategy" and st is not None:
+            planned = float(st["stop"] if sign < 0 else st["target"])
+            # keep the planned price; a lesson's wider stop widens the distance from the entry
+            return round(entry - (entry - planned) * factor, 2) if sign < 0 else round(planned, 2)
+        if spec["type"] == "strategy":
+            spec = {"type": "atr", "mult": default_mult}
         dist = entry * spec["value"] / 100 if spec["type"] == "pct" else spec["mult"] * a
         return round(entry + sign * dist * factor, 2)
 
     return lvl(rule.get("stop_loss"), cfg.default_stop_atr, -1, stop_factor), lvl(rule.get("target"), cfg.default_target_atr, 1)
+
+
+def _strategy_why(rule: dict, df: pd.DataFrame) -> str:
+    from syena.algos.rules import strategy_frame, strategy_node
+
+    node = strategy_node(rule.get("entry"))
+    if not node:
+        return ""
+    r = strategy_frame(df, node).iloc[-1]
+    return f" | setup: {r['reason']} (planned stop {r['stop']}, target {r['target']}, 1:{r['rr']})"
 
 
 def completed_bars(df: pd.DataFrame, timeframe: str, now: datetime) -> pd.DataFrame:
@@ -208,12 +228,16 @@ def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_f
                             vix=(ctx.get("VIX") or {}).get("last"))
         setup["technicals_agree"] = True  # the rule itself is the technical confirmation
         sig = Signal(source="algo", algo_id=algo.id, symbol=sym, action="BUY", confidence=100.0,
-                     reasoning=f"rule fired on bar {bar_ts}: {describe_rule(rule).splitlines()[0]}",
+                     reasoning=f"rule fired on bar {bar_ts}: {describe_rule(rule).splitlines()[0]}" + _strategy_why(rule, df),
                      indicators={"snapshot": snapshot(df, rule)}, price_at_signal=price, ts=now)
         db.add(sig)
         db.flush()
         consult = pretrade.consult(db, setup, None)
         stop, target = _risk_prices(rule, df, price, algo.style, db, consult.stop_factor)
+        if not stop < price < target:
+            log.info("algo signal skipped: price already beyond the planned stop/target",
+                     extra={"algo_id": algo.id, "stock": sym, "price": price, "stop": stop, "target": target})
+            continue
         intent = engine.TradeIntent(
             symbol=sym, style=algo.style, source="algo", ref_price=price, algo_id=algo.id, signal_id=sig.id,
             stop_loss=stop, target=target, algo_condition=algo.english_text,

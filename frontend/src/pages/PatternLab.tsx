@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import ZoneStrategyLab from "../components/ZoneStrategyLab";
 import { Empty, ErrorNote, Field, Loading, Page, Panel, Pill, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { when } from "../lib/format";
@@ -21,7 +22,7 @@ export default function PatternLab() {
   const rows = (res?.results ?? []).filter((r: any) => !onlyWinners || r.works);
 
   return (
-    <Page title="Pattern lab" intro="Which candlestick patterns actually made money on NSE stocks, and in which setting? Every bullish pattern is backtested alone and with filters across a whole index, with charges and slippage, and judged on both the earlier and the latest part of the period.">
+    <Page title="Pattern lab" intro="Which candlestick patterns actually made money on NSE stocks, and in which setting? Every bullish pattern is backtested alone and with filters across a whole index (plus the zone retest strategy from Umar Punjabi’s videos), with charges and slippage, and judged on both the earlier and the latest part of the period.">
       {toast.node}
       <div className="space-y-6">
         <Panel>
@@ -41,6 +42,8 @@ export default function PatternLab() {
           {job?.status === "failed" && <p className="mt-2 text-sm text-loss">The last run failed: {job.error}</p>}
           <ErrorNote error={lab.error} />
         </Panel>
+
+        <ZoneStrategyLab universe={universe} years={years} toast={toast} />
 
         {lab.isLoading ? <Loading /> : !res ? <Empty title="No results yet">Run the lab to see which patterns have an edge.</Empty> : (
           <Panel title={`${res.winners} combination${res.winners === 1 ? "" : "s"} with a proven edge`} aside={<span className="text-[13px] text-mute">{res.stocks} stocks · {res.period.from} to {res.period.to} · run {when(res.at)}</span>} pad={false}>
