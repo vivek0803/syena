@@ -22,7 +22,7 @@ export default function PatternLab() {
   const rows = (res?.results ?? []).filter((r: any) => !onlyWinners || r.works);
 
   return (
-    <Page title="Pattern lab" intro="Which candlestick patterns actually made money on NSE stocks, and in which setting? Every bullish pattern is backtested alone and with filters across a whole index (plus the zone retest strategy from Umar Punjabi’s videos), with charges and slippage, and judged on both the earlier and the latest part of the period.">
+    <Page title="Pattern lab" intro="Which candlestick patterns actually made money on NSE stocks, and in which setting? Every bullish pattern is backtested alone and with filters across a whole index (plus Syena's zone confluence strategy), with charges and slippage, and judged on both the earlier and the latest part of the period.">
       {toast.node}
       <div className="space-y-6">
         <Panel>

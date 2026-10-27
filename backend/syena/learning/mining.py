@@ -28,7 +28,7 @@ def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def mine(db: Session, min_n: int = 8, margin: float = 0.05) -> list[dict]:
-    trades = [t for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.CLOSED)) if not is_holdout(t)]
+    trades = [t for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.CLOSED, Trade.instrument == "EQ")) if not is_holdout(t)]
     if len(trades) < min_n * 2:
         return []
     overall = sum(1 for t in trades if (t.profit_loss or 0) > 0) / len(trades)

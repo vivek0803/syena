@@ -229,11 +229,16 @@ class AngelMarketData:
     def ltp(self, symbols: list[str]) -> dict[str, float]:
         if not symbols:
             return {}
+        from syena.market import options
+
+        opts, symbols = options.split_option_symbols(self.db, symbols)  # option trades: priced from NFO quotes
+        out = options.option_ltp(self, opts)
+        if not symbols:
+            return out
         toks = self._tokens(symbols)
         if not toks:
-            return {}
+            return out
         by_token = {v: k for k, v in toks.items()}
-        out = {}
         for q in self._quote("LTP", {"NSE": list(toks.values())}):
             sym = by_token.get(str(q.get("symbolToken")))
             if sym and q.get("ltp") is not None:
@@ -270,6 +275,11 @@ class AngelMarketData:
         return out
 
     def candles(self, symbol: str, interval: str, start: datetime, end: datetime) -> pd.DataFrame:
+        from syena.market.data import DERIVED, resample_session
+
+        if interval in DERIVED:
+            base, minutes = DERIVED[interval]
+            return resample_session(self.candles(symbol, base, start, end), minutes)
         if interval not in INTERVALS:
             raise ValueError(f"unsupported interval {interval}")
         cached = cached_candles(self.db, symbol, interval, start, end)

@@ -26,7 +26,9 @@ log = logging.getLogger("syena.screener")
 
 NUMERIC_FIELDS = ["shares_outstanding", "eps_ttm", "book_value_ps", "dividend_ps", "revenue_ttm", "net_income_ttm",
                   "ebitda_ttm", "total_debt", "total_cash", "roe", "roa", "debt_to_equity", "current_ratio",
-                  "sales_growth", "profit_growth", "operating_margin", "net_margin", "insider_holding"]
+                  "sales_growth", "profit_growth", "operating_margin", "net_margin", "insider_holding",
+                  "operating_cash_flow", "capex", "free_cash_flow", "fcf_3y_avg", "sales_cagr_3y", "profit_cagr_3y",
+                  "eps_cagr_3y", "roe_3y_avg", "roce_3y_avg", "opm_3y_avg"]
 
 
 def _f(v) -> float | None:
@@ -66,7 +68,7 @@ def sync_universe(db: Session, symbols: list[str]) -> dict:
 # ---------------------------------------------------------------- daily prices + ratios
 def compute_ratios(s: Stock, close: float, w52_high: float | None) -> dict:
     out = {"market_cap_cr": None, "pe": None, "pb": None, "ps": None, "ev_ebitda": None, "dividend_yield": None,
-           "earnings_yield": None, "pct_from_52w_high": None}
+           "earnings_yield": None, "pct_from_52w_high": None, "fcf_yield": None}
     if not close or close <= 0:
         return out
     mcap = close * s.shares_outstanding if s.shares_outstanding else None
@@ -74,6 +76,8 @@ def compute_ratios(s: Stock, close: float, w52_high: float | None) -> dict:
         out["market_cap_cr"] = round(mcap / 1e7, 2)
         if s.revenue_ttm and s.revenue_ttm > 0:
             out["ps"] = round(mcap / s.revenue_ttm, 2)
+        if getattr(s, "free_cash_flow", None) is not None:
+            out["fcf_yield"] = round(s.free_cash_flow * 1e7 / mcap * 100, 2)  # free cash flow is in ₹ crore
         if s.ebitda_ttm and s.ebitda_ttm > 0:
             out["ev_ebitda"] = round((mcap + (s.total_debt or 0) - (s.total_cash or 0)) / s.ebitda_ttm, 2)
     if s.eps_ttm:
@@ -155,7 +159,16 @@ def fetch_yahoo(symbol: str) -> dict:
         raise ValueError("no fundamentals on Yahoo")
     pct = lambda k: None if _f(info.get(k)) is None else round(_f(info.get(k)) * 100, 2)  # noqa: E731
     de = _f(info.get("debtToEquity"))
-    return {
+    try:  # annual statements: cash flow and 3-year figures (a missing statement must not lose the rest)
+        hist = annual_figures(yf.Ticker(f"{symbol}.NS"))
+    except Exception as e:
+        log.info("annual statements unavailable", extra={"symbol": symbol, "error": str(e)[:120]})
+        hist = {}
+    if hist.get("free_cash_flow") is None and _f(info.get("freeCashflow")) is not None:
+        hist["free_cash_flow"] = round(_f(info.get("freeCashflow")) / 1e7, 2)
+    if hist.get("operating_cash_flow") is None and _f(info.get("operatingCashflow")) is not None:
+        hist["operating_cash_flow"] = round(_f(info.get("operatingCashflow")) / 1e7, 2)
+    return {**hist, 
         "name": info.get("longName") or info.get("shortName"), "sector": info.get("sector"), "industry": info.get("industry"),
         "shares_outstanding": _f(info.get("sharesOutstanding")), "eps_ttm": _f(info.get("trailingEps")),
         "book_value_ps": _f(info.get("bookValue")), "dividend_ps": _f(info.get("dividendRate")) or 0.0,
@@ -167,6 +180,57 @@ def fetch_yahoo(symbol: str) -> dict:
         "profit_growth": pct("earningsGrowth"), "operating_margin": pct("operatingMargins"),
         "net_margin": pct("profitMargins"), "insider_holding": pct("heldPercentInsiders"),
     }
+
+
+def _row(df, *names):
+    """A statement line (newest year first), by any of its Yahoo names; [] when missing."""
+    if df is None or getattr(df, "empty", True):
+        return []
+    for n in names:
+        if n in df.index:
+            vals = [_f(v) for v in df.loc[n].tolist()]
+            return vals
+    return []
+
+
+def _cagr(vals: list, years: int = 3) -> float | None:
+    """Compound growth a year from the value `years` back to the latest (newest first); needs both positive."""
+    if len(vals) <= years or vals[0] is None or vals[years] is None or vals[0] <= 0 or vals[years] <= 0:
+        return None
+    return round(((vals[0] / vals[years]) ** (1 / years) - 1) * 100, 2)
+
+
+def _avg(vals: list, n: int = 3) -> float | None:
+    v = [x for x in vals[:n] if x is not None]
+    return round(sum(v) / len(v), 2) if len(v) == n else None
+
+
+def annual_figures(t) -> dict:
+    """Cash flow and 3-year figures from a yfinance Ticker's annual statements (columns = years, newest first)."""
+    inc, cf, bs = t.income_stmt, t.cashflow, t.balance_sheet
+    rev = _row(inc, "Total Revenue", "Operating Revenue")
+    ni = _row(inc, "Net Income Common Stockholders", "Net Income")
+    eps = _row(inc, "Diluted EPS", "Basic EPS")
+    op_inc = _row(inc, "Operating Income", "EBIT")
+    ebit = _row(inc, "EBIT", "Operating Income")
+    ocf = _row(cf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities")
+    capex = _row(cf, "Capital Expenditure")
+    fcf = _row(cf, "Free Cash Flow")
+    if not fcf and ocf and capex:
+        fcf = [None if a is None or b is None else a + b for a, b in zip(ocf, capex)]  # capex is negative on Yahoo
+    eq = _row(bs, "Stockholders Equity", "Common Stock Equity")
+    assets = _row(bs, "Total Assets")
+    cur_liab = _row(bs, "Current Liabilities")
+    roe = [None if (n is None or e is None or e <= 0) else n / e * 100 for n, e in zip(ni, eq)]
+    cap_emp = [None if (a is None or c is None) else a - c for a, c in zip(assets, cur_liab)]
+    roce = [None if (b is None or k is None or k <= 0) else b / k * 100 for b, k in zip(ebit, cap_emp)]
+    opm = [None if (o is None or r is None or r <= 0) else o / r * 100 for o, r in zip(op_inc, rev)]
+    first = lambda v: v[0] if v else None  # noqa: E731
+    cr = lambda v: None if v is None else round(v / 1e7, 2)  # noqa: E731  (cash figures in ₹ crore, like market cap)
+    out = {"operating_cash_flow": cr(first(ocf)), "capex": None if first(capex) is None else cr(abs(first(capex))),
+           "free_cash_flow": cr(first(fcf)), "fcf_3y_avg": cr(_avg(fcf)), "sales_cagr_3y": _cagr(rev), "profit_cagr_3y": _cagr(ni),
+           "eps_cagr_3y": _cagr(eps), "roe_3y_avg": _avg(roe), "roce_3y_avg": _avg(roce), "opm_3y_avg": _avg(opm)}
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def apply_fundamentals(s: Stock, data: dict, source: str) -> None:

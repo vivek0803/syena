@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from syena.db import utcnow
 from syena.market import kite as kite_session
+from syena.market.calendar import IST
 from syena.models import Candle, Instrument
 
 log = logging.getLogger("syena.data")
@@ -25,7 +26,29 @@ INDEX_KEYS = {"NIFTY": "NSE:NIFTY 50", "SENSEX": "BSE:SENSEX", "VIX": "NSE:INDIA
 # Kite historical API maximum days per request, per interval
 MAX_DAYS = {"minute": 60, "3minute": 100, "5minute": 100, "10minute": 100, "15minute": 200,
             "30minute": 200, "60minute": 400, "day": 2000}
-INTERVALS = list(MAX_DAYS)
+# candle sizes the brokers don't serve, built from a smaller one: (source interval, minutes)
+DERIVED = {"2minute": ("minute", 2), "240minute": ("60minute", 240)}
+INTERVALS = list(MAX_DAYS) + list(DERIVED)
+
+
+def resample_session(df: pd.DataFrame, minutes: int) -> pd.DataFrame:
+    """Bigger candles from smaller ones, aligned to the 09:15 open of each NSE session (a 4-hour candle is
+    09:15-13:15 and 13:15-15:30; a 2-minute candle 09:15-09:17...). Never mixes two days."""
+    if df is None or df.empty:
+        return df
+    idx = df.index.tz_convert(IST) if df.index.tz is not None else df.index.tz_localize("UTC").tz_convert(IST)
+    x = df.set_axis(idx)
+    out = []
+    for d, g in x.groupby(x.index.date):
+        open_ = pd.Timestamp(datetime.combine(d, datetime.min.time()).replace(hour=9, minute=15), tz=IST)
+        bucket = ((g.index - open_) // pd.Timedelta(minutes=minutes)).astype(int)
+        agg = g.groupby(bucket).agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+        agg.index = [open_ + pd.Timedelta(minutes=minutes * int(b)) for b in agg.index]
+        out.append(agg)
+    res = pd.concat(out)
+    res.index = pd.DatetimeIndex(res.index).tz_convert("UTC")
+    res.attrs = dict(df.attrs)
+    return res
 
 
 class MarketData(Protocol):
@@ -213,7 +236,11 @@ class KiteMarketData:
     def ltp(self, symbols: list[str]) -> dict[str, float]:
         if not symbols:
             return {}
-        data = self._kite().ltp([f"NSE:{s}" for s in symbols])
+        from syena.market import options
+
+        opts, symbols = options.split_option_symbols(self.db, symbols)
+        keys = [f"NSE:{s}" for s in symbols] + [f"NFO:{s}" for s in opts]
+        data = self._kite().ltp(keys) if keys else {}
         return {k.split(":", 1)[1]: float(v["last_price"]) for k, v in data.items()}
 
     def daily_quotes(self, symbols: list[str]) -> dict[str, dict]:
@@ -239,6 +266,9 @@ class KiteMarketData:
         return out
 
     def candles(self, symbol: str, interval: str, start: datetime, end: datetime) -> pd.DataFrame:
+        if interval in DERIVED:
+            base, minutes = DERIVED[interval]
+            return resample_session(self.candles(symbol, base, start, end), minutes)
         if interval not in MAX_DAYS:
             raise ValueError(f"unsupported interval {interval}")
         cached = cached_candles(self.db, symbol, interval, start, end)
@@ -273,6 +303,9 @@ class FrameMarketData:
         return df[df.index <= pd.Timestamp(self.as_of)]
 
     def candles(self, symbol: str, interval: str, start: datetime, end: datetime) -> pd.DataFrame:
+        if (symbol, interval) not in self.frames and interval in DERIVED:
+            base, minutes = DERIVED[interval]
+            return resample_session(self.candles(symbol, base, start, end), minutes)
         df = self.frames.get((symbol, interval))
         if df is None:
             return _frame([])

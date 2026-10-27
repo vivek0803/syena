@@ -23,7 +23,8 @@ RANGES = {"1D": 1, "5D": 7, "1M": 31, "3M": 92, "6M": 183, "1Y": 366, "3Y": 3 * 
 DEFAULT_INTERVAL = {"1D": "5minute", "5D": "15minute", "1M": "60minute", "3M": "day", "6M": "day", "1Y": "day",
                     "3Y": "day", "5Y": "day"}
 # candle interval -> (label, longest range it can show: more candles than that is slow to load and to draw)
-INTERVALS = {"minute": ("1m", 31), "5minute": ("5m", 92), "15minute": ("15m", 183), "60minute": ("1h", 366), "day": ("1D", 99999)}
+INTERVALS = {"minute": ("1m", 31), "2minute": ("2m", 31), "5minute": ("5m", 92), "15minute": ("15m", 183), "60minute": ("1h", 366),
+             "240minute": ("4h", 366), "day": ("1D", 99999)}
 
 
 def _num(v):
@@ -49,7 +50,9 @@ def stock(symbol: str, db: Session = Depends(get_db)):
     decisions = [ser(d, extra={"type": d.type.value}) for d in db.scalars(
         select(Decision).where(Decision.symbol == sym).order_by(Decision.id.desc()).limit(20))]
     trades = [ser(t) for t in db.scalars(select(Trade).where(Trade.stock == sym).order_by(Trade.id.desc()).limit(50))]
-    return {"symbol": sym, "metrics": row, "analyses": analyses,
+    from syena.screener import shareholding
+
+    return {"symbol": sym, "metrics": row, "analyses": analyses, "shareholding": shareholding.history(db, sym),
             "decisions": [{k: d[k] for k in ("id", "ts", "type", "side", "summary", "source", "mode", "confidence")} for d in decisions],
             "trades": [{k: t.get(k) for k in ("id", "side", "style", "mode", "status", "qty", "entry_price", "exit_price_executed",
                                                "stop_loss", "target", "profit_loss", "created_at", "closed_at", "source")} for t in trades]}
@@ -75,7 +78,7 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
         raise HTTPException(409, f"Price data isn't connected: {e}")
     end = utcnow()
     # extra history so averages (200-day / EMA 50) and month-long pattern lists start complete
-    warm = {"day": 450, "60minute": 45, "15minute": 35, "5minute": 33, "minute": 4}[interval]
+    warm = {"day": 450, "240minute": 120, "60minute": 45, "15minute": 35, "5minute": 33, "2minute": 8, "minute": 4}[interval]
     try:
         df = md.candles(sym, interval, end - timedelta(days=days + warm), end)
     except ValueError as e:

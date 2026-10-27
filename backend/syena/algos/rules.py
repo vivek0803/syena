@@ -121,7 +121,12 @@ def canon_node(n: dict) -> dict:
         name = n.get("name")
         if name not in pat.PATTERNS:
             raise RuleError(f"unknown candlestick pattern {name!r}. Supported: " + ", ".join(pat.PATTERNS))
-        return {"op": "pattern", "name": name}
+        out = {"op": "pattern", "name": name}
+        if n.get("confirm"):
+            if name in pat.GROUPS or pat.PATTERNS[name][1] == "neutral":
+                raise RuleError("confirmation applies to a single bullish or bearish pattern")
+            out["confirm"] = True
+        return out
     if op == "strategy":  # a built-in multi-step strategy fires on this bar (with its own stop and target)
         if n.get("name") != zt.NAME:
             raise RuleError(f"unknown strategy {n.get('name')!r}. Supported: {zt.NAME}")
@@ -289,9 +294,9 @@ def evaluate(df: pd.DataFrame, node: dict, cache: dict | None = None) -> pd.Seri
     if op == "not":
         return ~evaluate(df, node["arg"], cache)
     if op == "pattern":
-        key = f"pattern:{node['name']}"
+        key = f"pattern:{node['name']}:{bool(node.get('confirm'))}"
         if key not in cache:
-            cache[key] = pat.detect(df, node["name"])
+            cache[key] = pat.confirmed(df, node["name"]) if node.get("confirm") else pat.detect(df, node["name"])
         return cache[key]
     if op == "strategy":
         return strategy_frame(df, node, cache)["signal"].astype(bool)
@@ -395,7 +400,11 @@ def describe(node: dict | None) -> str:
         return "(" + f" {op.upper()} ".join(describe(a) for a in node["args"]) + ")"
     if op == "pattern":
         label = pat.PATTERNS[node["name"]][0]
-        return label if node["name"].startswith("any_") else f"{label} candle pattern"
+        text = label if node["name"] in pat.GROUPS else f"{label} candle pattern"
+        if node.get("confirm"):
+            text += (", confirmed by the next candle closing below its low" if pat.PATTERNS[node["name"]][1] == "bearish"
+                     else ", confirmed by the next candle closing above its high")
+        return text
     if op == "strategy":
         return zt.describe(node["params"])
     return f"NOT {describe(node['arg'])}"
@@ -406,7 +415,7 @@ def describe_risk(r: dict | None, label: str, default: str, strategy: dict | Non
         return f"{label}: default ({default})"
     if r["type"] == "strategy":
         p = (strategy or {}).get("params") or zt.DEFAULTS
-        return f"{label}: " + ("just beyond the demand zone and the confirmation candle's low" if label.startswith("Stop")
+        return f"{label}: " + ("just beyond the support zone and the confirmation candle's low" if label.startswith("Stop")
                                else zt.describe_target(p))
     return f"{label}: {r['value']:g}%" if r["type"] == "pct" else f"{label}: {r['mult']:g} × ATR({r.get('n', 14)})"
 

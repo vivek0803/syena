@@ -33,6 +33,7 @@ class PatchIn(BaseModel):
     symbols: list[str] | None = None
     timeframe: str | None = None
     style: Style | None = None
+    instrument: str | None = Field(default=None, pattern="^(EQ|OPT)$")  # OPT: buy call options on signals (paper)
 
 
 class ReauthIn(BaseModel):
@@ -55,6 +56,20 @@ def parse_preview(body: BuildIn, db: Session = Depends(get_db)):
 @router.get("")
 def list_algos(db: Session = Depends(get_db)):
     return [algo_out(a, db) for a in db.scalars(select(Algo).where(Algo.status != "DELETED").order_by(Algo.id.desc()))]
+
+
+@router.get("/patterns")
+def pattern_catalog():
+    """Every candlestick pattern the rule language understands, with what it means and how to write it."""
+    from syena.algos import patterns
+
+    return {"patterns": patterns.catalog(),
+            "modifiers": [{"phrase": "confirmed hammer", "meaning": "act only after the next candle closes beyond the pattern candle"},
+                          {"phrase": "hammer at support", "meaning": "the pattern's low touches a support zone and closes above it"},
+                          {"phrase": "shooting star at resistance", "meaning": "the high touches a resistance zone and closes below it"},
+                          {"phrase": "bullish engulfing on high volume", "meaning": "volume above its 20-candle average"},
+                          {"phrase": "morning star in an uptrend", "meaning": "close above the 50-candle average"},
+                          {"phrase": "…, sell when any bearish pattern", "meaning": "exit on the first bearish reversal pattern"}]}
 
 
 @router.post("")
@@ -141,6 +156,50 @@ def backtest(algo_id: int, days: int = 365, md=Depends(market_data), db: Session
         return svc.run_backtest(db, a, md, days=min(days, 2000))
     except RuleError as e:
         raise HTTPException(400, str(e))
+
+
+class TimeframesIn(BaseModel):
+    timeframes: list[str] | None = None
+
+
+_tf_jobs: dict[int, dict] = {}
+
+
+@router.post("/{algo_id}/backtest-timeframes")
+def backtest_timeframes(algo_id: int, body: TimeframesIn, md=Depends(market_data), db: Session = Depends(get_db)):
+    """Backtest the rule on 1m, 2m, 5m, 15m, 1h, 4h and daily candles (in the background: intraday history takes a while)."""
+    import threading
+
+    from syena.db import SessionLocal
+
+    a = _get(db, algo_id)
+    if not a.parsed_rule or not a.symbols:
+        raise HTTPException(400, "confirm the rule and add stocks first")
+    if _tf_jobs.get(algo_id, {}).get("status") == "running":
+        raise HTTPException(409, "already running for this algo")
+    del md  # checked that prices are connected; the job opens its own connection
+
+    def work():
+        from syena.market import source
+
+        _tf_jobs[algo_id] = {"status": "running"}
+        try:
+            with SessionLocal() as s:
+                algo = s.get(type(a), algo_id)
+                svc.backtest_all_timeframes(s, algo, source.get_market_data(s), body.timeframes)
+            _tf_jobs[algo_id] = {"status": "done"}
+        except Exception as e:
+            _tf_jobs[algo_id] = {"status": "failed", "error": str(e)[:300]}
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"started": True}
+
+
+@router.get("/{algo_id}/backtest-timeframes")
+def backtest_timeframes_result(algo_id: int, db: Session = Depends(get_db)):
+    _get(db, algo_id)
+    return {"latest": svc.timeframe_results(db, algo_id), "job": _tf_jobs.get(algo_id, {"status": None}),
+            "progress": svc._tf_progress.get(algo_id), "timeframes": {k: {"label": v[0], "days": v[1]} for k, v in svc.TF_WINDOWS.items()}}
 
 
 @router.get("/{algo_id}/backtest")

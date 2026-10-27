@@ -63,14 +63,35 @@ def fetch_feed(name: str, url: str, timeout: float = 15.0) -> list[RawItem]:
     r = httpx.get(url, headers={"User-Agent": UA, "Accept": "application/rss+xml, application/xml, text/xml, */*"},
                   timeout=timeout, follow_redirects=True)
     r.raise_for_status()
-    feed = feedparser.parse(r.content)
+    return parse_feed(name, url, r.content)
+
+
+_SUBJECT = re.compile(r"\|\s*SUBJECT\s*:\s*(.+)$", re.I)
+
+
+def parse_feed(name: str, url: str, content) -> list[RawItem]:
+    """Feed entries as RawItems. Every item is keyed by its own link, so two different articles (or filings) with
+    the same headline are never mistaken for one. NSE's announcement feed puts only the company name in the title
+    ('PB Fintech Limited') and the subject at the end of the description ('|SUBJECT: Board Meeting Intimation'):
+    the subject is moved into the title so each filing reads as its own story."""
+    import feedparser
+
+    feed = feedparser.parse(content)
     out = []
     for e in feed.entries:
         published = parse_date(e) or datetime.now(timezone.utc)
         title = _clean(e.get("title", ""))
         if not title:
             continue
-        out.append(RawItem(name, e.get("link", url), title, _clean(e.get("summary", "") or e.get("description", "")), published))
+        body = _clean(e.get("summary", "") or e.get("description", ""))
+        m = _SUBJECT.search(body)
+        if m:
+            subject = m.group(1).strip()
+            body = body[:m.start()].strip()
+            if subject.lower() not in title.lower():
+                title = f"{title} – {subject}"[:500]
+        link = e.get("link") or url
+        out.append(RawItem(name, link, title, body, published, key=f"url:{link}" if link != url else None))
     return out
 
 
@@ -182,6 +203,28 @@ def filing_text(url: str, timeout: float = 15.0, get=None) -> str | None:
         return None
     text = pdf_text(data)
     return text or None
+
+
+ARTICLE_MARK = "[From the article]"
+_P = re.compile(r"<p[^>]*>(.*?)</p>", re.S | re.I)
+_DROP = re.compile(r"<(script|style|noscript|aside|nav|footer|header|form)[^>]*>.*?</\1>", re.S | re.I)
+
+
+def article_text(url: str, timeout: float = 12.0, get=None, max_chars: int = 3000) -> str | None:
+    """Main text of a news article: its paragraphs, minus menus, scripts and one-line boilerplate."""
+    get = get or (lambda u: httpx.get(u, headers={"User-Agent": UA, "Accept": "text/html"}, timeout=timeout, follow_redirects=True))
+    r = get(url)
+    r.raise_for_status()
+    if "html" not in r.headers.get("content-type", "text/html"):
+        return None
+    html = _DROP.sub(" ", r.text)
+    paras = []
+    for m in _P.finditer(html):
+        t = _clean(m.group(1))
+        if len(t) >= 60 and not re.search(r"(subscribe|cookie|sign in|download the app|all rights reserved|follow us)", t, re.I):
+            paras.append(t)
+    text = " ".join(dict.fromkeys(paras))
+    return text[:max_chars] or None
 
 
 def download_image(url: str, max_bytes: int = 4_500_000, timeout: float = 15.0) -> tuple[str, bytes] | None:

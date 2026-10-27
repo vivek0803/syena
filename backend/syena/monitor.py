@@ -75,7 +75,7 @@ def scan(db: Session, md, now: datetime | None = None, broker_factory=None) -> d
         if t.max_hold_until and now >= t.max_hold_until:
             results.append(_exit_or_alert(db, t, "max_holding_period", f"held since {t.created_at:%d %b}", p, broker_factory))
             continue
-        if t.style == Style.SWING and calendar.to_ist(t.created_at).date() < calendar.to_ist(now).date():
+        if t.style == Style.SWING and (t.instrument or "EQ") == "EQ" and calendar.to_ist(t.created_at).date() < calendar.to_ist(now).date():
             day = md.candles(t.stock, "day", now - timedelta(days=5), now)
             if len(day) >= 2:
                 gap = (float(day["open"].iloc[-1]) / float(day["close"].iloc[-2]) - 1) * 100
@@ -83,10 +83,16 @@ def scan(db: Session, md, now: datetime | None = None, broker_factory=None) -> d
                     results.append(_exit_or_alert(db, t, "gap_down", f"opened {gap:.1f}% below previous close", p, broker_factory))
                     continue
         since = max(t.created_at, now - timedelta(minutes=mon["scan_minutes"] + 5))
+        sym, bearish_pos = t.stock, t.side == "SELL"
+        if (t.instrument or "EQ") == "OPT":  # an option: watch news on the underlying; a put profits from bad news
+            sym, bearish_pos = (t.option or {}).get("underlying") or t.stock, (t.option or {}).get("type") == "PE"
+        thr = mon["negative_news_sentiment"]
         bad = [a for a in db.scalars(select(NewsAnalysis).where(NewsAnalysis.stage == "analysis", NewsAnalysis.created_at >= since))
-               if t.stock in (a.symbols or []) and a.sentiment is not None and a.sentiment <= mon["negative_news_sentiment"]]
+               if sym in (a.symbols or []) and a.sentiment is not None
+               and (a.sentiment >= -thr if bearish_pos else a.sentiment <= thr)]
         if bad:
-            results.append(_exit_or_alert(db, t, "negative_news", f"{bad[-1].summary or 'materially negative news'}", p, broker_factory))
+            results.append(_exit_or_alert(db, t, "positive_news" if bearish_pos else "negative_news",
+                                          f"{bad[-1].summary or 'material news against the position'}", p, broker_factory))
     return {"open": len(opens), "actions": results}
 
 

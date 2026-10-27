@@ -40,7 +40,8 @@ def test_triage_never_trusts_symbols_outside_candidates(db, user, fake_llm):
 
 def test_triage_irrelevant_without_candidates(db, user, fake_llm):
     item = pipeline.ingest(db, [raw("Monsoon rainfall above normal")])[0]
-    assert pipeline.triage(db, item, [])["relevant"] is False and not fake_llm.prompts
+    # no name matched: one cheap AI lookup for brand names; it found no listed company, so no triage call
+    assert pipeline.triage(db, item, [])["relevant"] is False and len(fake_llm.prompts) == 1
 
 
 def test_market_context_score():

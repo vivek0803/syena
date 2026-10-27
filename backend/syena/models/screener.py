@@ -37,6 +37,28 @@ class Stock(Base):
     operating_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
     net_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
     insider_holding: Mapped[float | None] = mapped_column(Float, nullable=True)  # % held by promoters/insiders
+    # cash flow (latest financial year, ₹ crore) and 3-year figures from the last four annual reports
+    operating_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
+    capex: Mapped[float | None] = mapped_column(Float, nullable=True)
+    free_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fcf_3y_avg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sales_cagr_3y: Mapped[float | None] = mapped_column(Float, nullable=True)  # % a year
+    profit_cagr_3y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_cagr_3y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roe_3y_avg: Mapped[float | None] = mapped_column(Float, nullable=True)  # %
+    roce_3y_avg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opm_3y_avg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # shareholding pattern (latest quarter filed with NSE, % of shares) and change from the quarter before (points)
+    promoter_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fii_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dii_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mf_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    public_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    retail_holding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    promoter_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fii_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dii_change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shareholding_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     fundamentals_source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # yahoo | csv
     fundamentals_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True, index=True)
     fundamentals_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -68,6 +90,7 @@ class StockDaily(Base):
     dividend_yield: Mapped[float | None] = mapped_column(Float, nullable=True)
     earnings_yield: Mapped[float | None] = mapped_column(Float, nullable=True)
     pct_from_52w_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fcf_yield: Mapped[float | None] = mapped_column(Float, nullable=True)  # free cash flow / market cap, %
 
     __table_args__ = (UniqueConstraint("symbol", "day", name="uq_stock_day"), Index("ix_stock_daily_day", "day"))
 
@@ -112,3 +135,24 @@ class Watchlist(Base):
     ai_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # last AI comparison
     ai_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ShareholdingPattern(Base):
+    """One quarterly shareholding pattern filed with NSE (from its XBRL file), in % of shares."""
+    __tablename__ = "shareholding_patterns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    promoter: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fii: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dii: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mf: Mapped[float | None] = mapped_column(Float, nullable=True)
+    insurance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    public: Mapped[float | None] = mapped_column(Float, nullable=True)
+    retail: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shareholders: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("symbol", "as_of", name="uq_shp_symbol_date"),)

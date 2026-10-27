@@ -60,3 +60,28 @@ def leg_charges(side: str, qty: int, price: float, intraday: bool) -> ChargeBrea
 
 def round_trip(qty: int, buy: float, sell: float, intraday: bool) -> float:
     return round(leg_charges("BUY", qty, buy, intraday).total + leg_charges("SELL", qty, sell, intraday).total, 2)
+
+
+# NSE options (premium turnover). Verify against zerodha.com/charges: STT on the sell side was raised for options in
+# 2026; flat ₹20 brokerage per executed order.
+OPTION_RATES = {
+    "brokerage_flat": 20.0,
+    "stt_sell": 0.0015,
+    "exchange_txn": 0.0003553,
+    "sebi": 0.000001,
+    "stamp_buy": 0.00003,
+    "gst": 0.18,
+}
+
+
+def option_leg_charges(side: str, qty: int, premium: float) -> ChargeBreakdown:
+    """Charges for one executed option order (qty in units, i.e. lots × lot size; premium per unit)."""
+    r = OPTION_RATES
+    turnover = qty * premium
+    brokerage = r["brokerage_flat"] if turnover > 0 else 0.0
+    stt = turnover * r["stt_sell"] if side == "SELL" else 0.0
+    stamp = turnover * r["stamp_buy"] if side == "BUY" else 0.0
+    txn = turnover * r["exchange_txn"]
+    sebi = turnover * r["sebi"]
+    gst = (brokerage + txn + sebi) * r["gst"]
+    return ChargeBreakdown(*(round(x, 4) for x in (brokerage, stt, txn, sebi, stamp, gst, 0.0)))

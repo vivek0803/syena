@@ -164,6 +164,8 @@ class FakeLLM:
                       "themes": [{"theme": "EU tariffs", "direction": "negative", "industries": ["Computers - Software & Consulting"],
                                   "companies": ["Infosys", "Fake Exporter Ltd"], "why": "large European revenue", "confidence": 75},
                                  {"theme": "weak link", "direction": "positive", "industries": [], "companies": ["TCS"], "why": "?", "confidence": 30}]}
+        self.companies = {"companies": []}
+        self.top_news = None
         self.prompts: list[str] = []
 
     def __call__(self, model, system, user):
@@ -186,6 +188,10 @@ class FakeLLM:
             return _json.dumps(self.macro)
         if system.startswith("You are Syena's market assistant"):
             return _json.dumps(self.ask)
+        if system.startswith("You find the Indian listed companies"):
+            return _json.dumps(self.companies)
+        if system.startswith("You are the evening editor"):
+            return _json.dumps(self.top_news or {"top": [], "market_mood": "calm"})
         if system.startswith("You review a proposed manual"):
             return _json.dumps({"verdict": "caution", "issues": [], "suggested": {}, "summary": "ok"})
         return _json.dumps({"text": "pattern"})

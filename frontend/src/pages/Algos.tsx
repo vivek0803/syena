@@ -6,6 +6,8 @@ import { api } from "../lib/api";
 import { day, money, num, ratio, signed, tone, when } from "../lib/format";
 import { useAct, useApi } from "../lib/hooks";
 import StockPicker from "../components/StockPicker";
+import PatternPicker from "../components/PatternPicker";
+import TimeframeBacktest from "../components/TimeframeBacktest";
 
 const examples = [
   "buy when SMA 20 crosses above SMA 50",
@@ -15,8 +17,12 @@ const examples = [
   "bullish engulfing and close > SMA 50, sell when bearish engulfing",
   "close breaks above the trendline and volume above 20-day average",
   "hammer and RSI 14 < 35, stop loss 2%, target 5%",
+  "confirmed hammer at support on high volume, sell when any bearish pattern",
+  "morning star in an uptrend, target 6%",
+  "zone confluence setup score above 70",
 ];
-const timeframes = ["minute", "5minute", "15minute", "30minute", "60minute", "day"];
+const timeframes = ["minute", "2minute", "5minute", "15minute", "30minute", "60minute", "240minute", "day"];
+const tfLabel = (t: string) => ({ day: "daily", minute: "1 min", "60minute": "1 hour", "240minute": "4 hours" } as Record<string, string>)[t] ?? t.replace("minute", " min");
 
 export default function Algos() {
   const { id } = useParams();
@@ -43,6 +49,11 @@ function Builder() {
             <textarea className="input min-h-[96px] font-medium" required maxLength={2000} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })}
               placeholder="buy when SMA 20 crosses above SMA 50" />
           </Field>
+          <PatternPicker onPick={(ph) => setF((cur) => {
+            const t = cur.text.trim();
+            if (ph.startsWith(",")) return { ...cur, text: `${t || "buy when hammer"}${ph}` };  // an exit clause
+            return { ...cur, text: t ? `${t} and ${ph}` : `buy when ${ph}` };
+          })} />
           <div className="flex flex-wrap gap-2">
             {examples.map((x) => <button type="button" key={x} className="rounded-md bg-dusk px-2.5 py-1 text-sm text-parch-dim hover:text-parch" onClick={() => setF({ ...f, text: x })}>{x}</button>)}
           </div>
@@ -52,7 +63,7 @@ function Builder() {
             <Field label="Style"><select className="input" value={f.style} onChange={(e) => setF({ ...f, style: e.target.value })}>
               <option value="INTRADAY">Intraday (MIS)</option><option value="SWING">Swing (CNC)</option><option value="LONG_TERM">Long-term (CNC)</option></select></Field>
             <Field label="Candles"><select className="input" value={f.timeframe} onChange={(e) => setF({ ...f, timeframe: e.target.value })}>
-              {timeframes.map((t) => <option key={t} value={t}>{t === "day" ? "daily" : t === "minute" ? "1 min" : t.replace("minute", " min")}</option>)}</select></Field>
+              {timeframes.map((t) => <option key={t} value={t}>{tfLabel(t)}</option>)}</select></Field>
             <Field label="Name (optional)"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
           </div>
           <Field label="Stocks" hint="Search by symbol or name, paste a list, or add a whole index, market-cap group, sector or one of your screens.">
@@ -162,8 +173,11 @@ function Inspector({ id }: { id: number }) {
               <Field label="Style"><select className="input" disabled={running} value={a.style} onChange={(e) => patch.mutate({ style: e.target.value })}>
                 <option value="INTRADAY">Intraday</option><option value="SWING">Swing</option><option value="LONG_TERM">Long-term</option></select></Field>
               <Field label="Candles"><select className="input" disabled={running} value={a.timeframe} onChange={(e) => patch.mutate({ timeframe: e.target.value })}>
-                {timeframes.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
+                {timeframes.map((t) => <option key={t} value={t}>{tfLabel(t)}</option>)}</select></Field>
+              {a.kind === "rule" && <Field label="Trade as"><select className="input" disabled={running} value={a.instrument ?? "EQ"} onChange={(e) => patch.mutate({ instrument: e.target.value })}>
+                <option value="EQ">Shares</option><option value="OPT">Call options (paper)</option></select></Field>}
             </div>
+            {a.instrument === "OPT" && <p className="text-[13px] text-mute">On each signal Syena buys an at-the-money call on that stock (nearest expiry with 4+ days left), paper only. Stop −30% / target +60% on the premium, out before expiry. Results on the Option chain page.</p>}
             <AlgoStocks a={a} running={running} onSave={(symbols) => patch.mutate({ symbols })} saving={patch.isPending} />
             {a.kind === "rule" && a.parsed_rule && (ruleText === null ? (
               <button className="text-sm text-saffron hover:underline" disabled={running} onClick={() => setRuleText(JSON.stringify(a.parsed_rule, null, 2))}>Edit the rule JSON</button>
@@ -211,6 +225,7 @@ function Inspector({ id }: { id: number }) {
           {!report ? <p className="text-parch-dim">Run a backtest on historical candles. Fills happen at the next candle's open with slippage and full charges; the ₹ position-size band applies.</p> : <BacktestReport r={report} />}
         </Panel>
       )}
+      {a.kind === "rule" && <TimeframeBacktest id={id} disabled={!a.parsed_rule || !(a.symbols ?? []).length} nSymbols={(a.symbols ?? []).length} />}
 
       {data.gate && (
         <Panel title="LIVE gate" aside={<span className="text-sm text-mute">thresholds in Settings</span>}>

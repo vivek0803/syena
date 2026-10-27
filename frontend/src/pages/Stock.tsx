@@ -10,7 +10,7 @@ import { useApi } from "../lib/hooks";
 
 const RANGES = ["1D", "5D", "1M", "3M", "6M", "1Y", "3Y", "5Y"];
 // candle size -> longest range it can show (more candles than that is slow to load and draw)
-const CANDLES: [string, string, string][] = [["minute", "1m", "1M"], ["5minute", "5m", "3M"], ["15minute", "15m", "6M"], ["60minute", "1h", "1Y"], ["day", "1D", "5Y"]];
+const CANDLES: [string, string, string][] = [["minute", "1m", "1M"], ["2minute", "2m", "1M"], ["5minute", "5m", "3M"], ["15minute", "15m", "6M"], ["60minute", "1h", "1Y"], ["240minute", "4h", "1Y"], ["day", "1D", "5Y"]];
 const AUTO: Record<string, string> = { "1D": "5minute", "5D": "15minute", "1M": "60minute", "3M": "day", "6M": "day", "1Y": "day", "3Y": "day", "5Y": "day" };
 const fits = (iv: string, range: string) => RANGES.indexOf(range) <= RANGES.indexOf(CANDLES.find((c) => c[0] === iv)![2]);
 const IST = 19800; // chart axis in Indian time
@@ -119,6 +119,7 @@ function StockView({ symbol }: { symbol: string }) {
           </div>
           <div className="space-y-6">
             <Panel title="Key figures"><Figures m={m} rsi={chart.data?.rsi?.at(-1)?.v} /></Panel>
+            <Ownership m={m} history={info.data?.shareholding ?? []} />
             <LevelsPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
             <ZoneSetupPanel data={chart.data} label={CANDLES.find((c) => c[0] === iv)?.[1] ?? ""} />
             <VerifyPanel symbol={symbol} />
@@ -173,7 +174,7 @@ function ZoneSetupPanel({ data, label }: { data: any; label: string }) {
   if (!z?.available) return null;
   const bull = z.bias?.startsWith("bullish"), htfBull = z.htf_bias?.startsWith("bullish");
   return (
-    <Panel title="Zone retest setup" aside={<span className="text-[12px] text-mute">Umar Punjabi method · {label}</span>}>
+    <Panel title="Zone confluence setup" aside={<span className="text-[12px] text-mute">{label} candles</span>}>
       <div className="space-y-1 text-sm">
         <p><span className="text-mute">Bias:</span> <b className={bull ? "text-gain" : z.bias?.startsWith("bearish") ? "text-loss" : "text-parch"}>{z.bias}</b></p>
         {z.htf_bias && <p><span className="text-mute">Higher timeframe:</span> <span className={htfBull ? "text-gain" : z.htf_bias.startsWith("bearish") ? "text-loss" : "text-parch-dim"}>{z.htf_bias}</span></p>}
@@ -181,7 +182,7 @@ function ZoneSetupPanel({ data, label }: { data: any; label: string }) {
       {z.fired_today ? (
         <div className="mt-3 rounded-lg border border-gain/40 bg-gain-soft/20 p-3 text-sm">
           <b className="text-gain">Setup on the latest candle</b>
-          <p className="mt-1 text-parch-dim">Stop ₹{n(z.stop)} · target ₹{n(z.target)} · 1:{z.rr}</p>
+          <p className="mt-1 text-parch-dim">Score {z.score}/100 · stop ₹{n(z.stop)} · target ₹{n(z.target)} · 1:{z.rr}</p>
           <p className="mt-1 text-[12px] text-mute">{z.why}</p>
         </div>
       ) : z.waiting_zones?.length ? (
@@ -190,7 +191,7 @@ function ZoneSetupPanel({ data, label }: { data: any; label: string }) {
           <ul className="mt-1 space-y-1">{z.waiting_zones.map((w: any, i: number) => (
             <li key={i} className="flex items-baseline gap-2">
               <span className="tabular-nums">₹{n(w.low)} – {n(w.high)}</span>
-              <span className="text-[12px] text-mute">{w.kind === "flip" ? "old resistance, now support" : "origin of a strong move"}{w.visits ? ` · ${w.visits} retest${w.visits > 1 ? "s" : ""}` : " · untested"}</span>
+              <span className="text-[12px] text-mute">{w.kind === "flip" ? "old resistance, now support" : w.kind === "origin" ? "where a strong move began" : `support zone · ${w.touches} touches`}</span>
               <span className="ml-auto text-[12px] tabular-nums text-mute">{w.distance_pct}%</span>
             </li>))}</ul>
         </div>
@@ -199,10 +200,10 @@ function ZoneSetupPanel({ data, label }: { data: any; label: string }) {
         <details className="mt-3 text-[13px]">
           <summary className="cursor-pointer text-parch-dim">Last {z.recent.length} setups on this chart</summary>
           <ul className="mt-2 space-y-2">{[...z.recent].reverse().map((r: any) => (
-            <li key={r.ts}><span className="text-parch">{when(r.ts)}</span> <span className="text-mute">stop ₹{n(r.stop)} · target ₹{n(r.target)} · 1:{r.rr}</span>
+            <li key={r.ts}><span className="text-parch">{when(r.ts)}</span> <span className="text-mute">score {r.score} · stop ₹{n(r.stop)} · target ₹{n(r.target)} · 1:{r.rr}</span>
               <p className="text-[12px] text-mute">{r.why}</p></li>))}</ul>
         </details>)}
-      <p className="mt-3 text-[12px] text-mute">Buys only when structure is bullish, price is back in a strong demand zone (where a move that broke structure started, or broken resistance), and a bullish candle confirms. Stop beyond the zone, target the next strong resistance, at least 1:2. Test it on the Pattern lab page.</p>
+      <p className="mt-3 text-[12px] text-mute">Syena's swing setup: price back in a support zone with a bullish confirmation candle, scored out of 100 on trend, zone quality, confirmation, volume, a sweep of the lows and Fibonacci/RSI extras; trades from {z.min_score ?? 60}. Stop beyond the zone, target the next strong resistance, at least 1:2. Test it on the Pattern lab page.</p>
     </Panel>
   );
 }
@@ -272,8 +273,9 @@ function Figures({ m, rsi }: { m: any; rsi?: number }) {
     ["Market cap ₹cr", m.market_cap, 0], ["P/E", m.pe, 1], ["P/B", m.pb, 1], ["EV/EBITDA", m.ev_ebitda, 1],
     ["ROE %", m.roe, 1], ["ROA %", m.roa, 1], ["Debt / equity", m.debt_to_equity, 2], ["Operating margin %", m.opm, 1],
     ["Sales growth % (YoY)", m.sales_growth, 1], ["Profit growth % (YoY)", m.profit_growth, 1], ["Dividend yield %", m.dividend_yield, 2],
-    ["Promoter holding %", m.promoter_holding, 1], ["52-week high", m.high_52w, 2], ["52-week low", m.low_52w, 2],
-    ["% from 52-week high", m.pct_from_52w_high, 1], ["RSI 14", rsi, 0],
+    ["Sales CAGR 3y %", m.sales_cagr_3y, 1], ["Profit CAGR 3y %", m.profit_cagr_3y, 1], ["ROE 3y avg %", m.roe_3y, 1],
+    ["ROCE 3y avg %", m.roce_3y, 1], ["Free cash flow ₹cr", m.free_cash_flow, 0], ["FCF yield %", m.fcf_yield, 2],
+    ["52-week high", m.high_52w, 2], ["52-week low", m.low_52w, 2], ["% from 52-week high", m.pct_from_52w_high, 1], ["RSI 14", rsi, 0],
   ];
   return (
     <>
@@ -281,6 +283,28 @@ function Figures({ m, rsi }: { m: any; rsi?: number }) {
         <div key={k} className="contents"><dt className="text-mute">{k}</dt><dd className="text-right tabular-nums">{n(v, d)}</dd></div>))}</dl>
       {!m.fundamentals_at && <p className="mt-3 text-[12px] text-mute">Company figures not fetched yet: they arrive with the nightly update, or add this stock to a Compare list and click Update data.</p>}
     </>
+  );
+}
+
+function Ownership({ m, history }: { m: any; history: any[] }) {
+  if (!m || (m.promoter_holding == null && m.fii_holding == null && !history.length)) return null;
+  const chg = (v: any) => v == null ? null : <span className={v > 0 ? "text-gain" : v < 0 ? "text-loss" : "text-mute"}>{v > 0 ? "+" : ""}{n(v, 2)}</span>;
+  const rows: [string, any, any][] = [["Promoters", m.promoter_holding, m.promoter_change], ["FIIs (foreign institutions)", m.fii_holding, m.fii_change],
+    ["DIIs (domestic institutions)", m.dii_holding, m.dii_change], ["  of which mutual funds", m.mf_holding, null], ["Retail investors", m.retail_holding, null]];
+  return (
+    <Panel title="Shareholding" aside={history[0] ? <span className="text-[12px] text-mute">quarter to {day(history[0].as_of)}</span> : undefined}>
+      <dl className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1.5 text-sm">
+        <dt className="text-[11px] text-mute">holder</dt><dd className="text-right text-[11px] text-mute">%</dd><dd className="text-right text-[11px] text-mute">vs last qtr</dd>
+        {rows.map(([k, v, c]) => (
+          <div key={k} className="contents"><dt className="whitespace-pre text-mute">{k}</dt><dd className="text-right tabular-nums">{n(v, 2)}</dd><dd className="text-right tabular-nums">{chg(c) ?? "–"}</dd></div>))}
+      </dl>
+      {history.length > 1 && (
+        <details className="mt-3 text-[13px]"><summary className="cursor-pointer text-parch-dim">Last {history.length} quarters</summary>
+          <table className="mt-2 w-full text-right tabular-nums"><thead className="text-[11px] text-mute"><tr><th className="text-left font-normal">Quarter</th><th className="font-normal">Prom.</th><th className="font-normal">FII</th><th className="font-normal">DII</th><th className="font-normal">MF</th></tr></thead>
+            <tbody>{history.map((h) => <tr key={h.as_of}><td className="text-left text-mute">{day(h.as_of)}</td><td>{n(h.promoter, 1)}</td><td>{n(h.fii, 1)}</td><td>{n(h.dii, 1)}</td><td>{n(h.mf, 1)}</td></tr>)}</tbody></table>
+        </details>)}
+      <p className="mt-2 text-[12px] text-mute">From the quarterly shareholding pattern filed with NSE. Rising FII/DII holding means big institutions are buying.</p>
+    </Panel>
   );
 }
 

@@ -63,8 +63,12 @@ DEFAULTS: dict[str, Any] = {
     # next open (skipping the opening-minute spike), unless the price opened more than max_gap_pct against the trade.
     "amo": {"enabled": True, "place_after": "09:16", "max_gap_pct": 2.0, "cancel_unfilled_after": "10:00"},
     # Fundamental screener: company figures refresh a batch of stocks every night (whole universe ~weekly).
-    "screener": {"fundamentals_per_night": 400, "fundamentals_max_age_days": 7, "prefer_csv_days": 100,
+    "screener": {"fundamentals_per_night": 400, "fundamentals_max_age_days": 7, "prefer_csv_days": 100, "shareholding_per_night": 150,
                  "signal_lookback_days": 400},
+    # Options (paper only): Syena buys calls (bullish) or puts (bearish), never writes options.
+    "options": {"enabled": True, "news_enabled": True, "min_premium": 2000, "max_premium": 15000, "max_lots": 3,
+                "max_open": 5, "max_per_day": 10, "stop_pct": 30, "target_pct": 60, "strike": "ATM",
+                "min_days_to_expiry": 4, "max_hold_days": 5},
     "orders": {"prefer_limit": True, "limit_buffer_bps": 10.0, "market_protection_pct": 2.0, "max_retries": 3},
     "market_context": {"w_nifty": 0.5, "w_sensex": 0.2, "w_vix": 0.3, "nifty_scale_pct": 1.0, "vix_scale_pct": 5.0},
     "models": {
@@ -91,7 +95,7 @@ DEFAULTS: dict[str, Any] = {
         "style": "SWING",
         # AI says SELL (and you don't hold it): sell short intraday (MIS) and buy back the same day by square-off.
         "short_selling": True,
-        "max_items_per_run": 60,
+        "max_items_per_run": 100,
         # News older than this (by its published time) is skipped: no AI call, no trade.
         "max_age_minutes": 120,  # news during market hours stays tradeable this long (never past the close)
         "carry_after_hours": True,  # after-hours / overnight news stays valid until the next open
@@ -104,6 +108,8 @@ DEFAULTS: dict[str, Any] = {
         "macro_mapping": True,  # broad news (sanctions, tariffs, crude, RBI...) -> the stocks it affects
         "macro_max_stocks": 5,
         "macro_min_confidence": 60,  # Telegram message when news about a stock you own is analysed  # same stock analysed in the last hour: another source's copy, no second AI call
+        "ai_company_lookup": True,  # no company name matched: ask the AI which listed companies the item is about
+        "fetch_articles": True,  # read the full article for relevant news when the feed only gives a headline
         "read_images": True,  # read text in Telegram post images with the AI (triage model)
         # candlestick patterns + trendlines shown to the AI for each analysed stock, per timeframe, over this many days
         "pattern_timeframes": ["day", "60minute", "15minute", "5minute", "minute"],

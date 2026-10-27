@@ -21,7 +21,8 @@ from syena.algos import indicators as ind
 
 log = logging.getLogger("syena.algos")
 
-BAR_MINUTES = {"minute": 1, "3minute": 3, "5minute": 5, "10minute": 10, "15minute": 15, "30minute": 30, "60minute": 60, "day": 1440}
+BAR_MINUTES = {"minute": 1, "2minute": 2, "3minute": 3, "5minute": 5, "10minute": 10, "15minute": 15, "30minute": 30, "60minute": 60,
+               "240minute": 240, "day": 1440}
 
 
 def backtest_config(db: Session, style: Style) -> BacktestConfig:
@@ -56,18 +57,19 @@ def edit_rule(db: Session, algo: Algo, rule: dict) -> Algo:
     return algo
 
 
-def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
+def backtest_on(db: Session, algo: Algo, md, timeframe: str, days: int) -> dict:
+    """Backtest the algo's rule on one candle size over the last `days` days (nothing saved)."""
     if not algo.parsed_rule:
         raise RuleError("no confirmed rule")
     if not algo.symbols:
         raise RuleError("add at least one symbol")
     end = utcnow()
-    start = end - timedelta(days=days if algo.timeframe == "day" else min(days, 180))
+    start = end - timedelta(days=days)
     cfg = backtest_config(db, algo.style)
     per, failed = [], []
     for sym in algo.symbols:  # one stock's missing data or a rate-limit hiccup must not sink the whole backtest
         try:
-            df = md.candles(sym, algo.timeframe, start, end)
+            df = md.candles(sym, timeframe, start, end)
             if df is None or len(df) < 3:
                 failed.append({"symbol": sym, "reason": "no price history"})
                 continue
@@ -82,8 +84,13 @@ def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
                         + "; ".join(f"{f['symbol']}: {f['reason']}" for f in failed[:5]))
     report = combine(per, cfg)
     report["failed_symbols"] = failed
-    report["config"] = {"start": start.isoformat(), "end": end.isoformat(), "timeframe": algo.timeframe,
-                        "style": algo.style.value, "symbols": [r["symbol"] for r in per]}
+    report["config"] = {"start": start.isoformat(), "end": end.isoformat(), "timeframe": timeframe,
+                        "style": algo.style.value, "symbols": [r["symbol"] for r in per], "bars": sum(r["bars"] for r in per)}
+    return report
+
+
+def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
+    report = backtest_on(db, algo, md, algo.timeframe, days if algo.timeframe == "day" else min(days, 180))
     from syena.screener.screens import linked_screens
 
     if linked_screens(db, algo.id):
@@ -101,6 +108,62 @@ def run_backtest(db: Session, algo: Algo, md, days: int = 365) -> dict:
     db.commit()
     log.info("backtest done", extra={"algo_id": algo.id, "trades": m["trades"], "passed": algo.backtest_passed})
     return report
+
+
+# ---------------------------------------------------------------- every timeframe
+# candle size -> (label, days of history tested). Short candles get short windows: a month of 1-minute candles is
+# already ~7,500 bars per stock, and Angel/Kite only keep so much intraday history.
+TF_WINDOWS = {"minute": ("1 min", 30), "2minute": ("2 min", 30), "5minute": ("5 min", 90), "15minute": ("15 min", 180),
+              "60minute": ("1 hour", 365), "240minute": ("4 hours", 365), "day": ("1 day", 3 * 365)}
+_tf_progress: dict[int, dict] = {}
+
+
+def backtest_all_timeframes(db: Session, algo: Algo, md, timeframes: list[str] | None = None, max_symbols: int = 25) -> dict:
+    """The same rule backtested on each candle size. Indicator periods count candles, so 'SMA 20' is 20 minutes on
+    1-minute candles and 20 days on daily ones: the table shows which candle size the rule actually suits."""
+    from syena.models import AppSetting
+
+    tfs = [t for t in (timeframes or list(TF_WINDOWS)) if t in TF_WINDOWS]
+    if not tfs:
+        raise RuleError("pick at least one timeframe")
+    syms_all = list(algo.symbols or [])
+    sample = syms_all[:max_symbols]
+    from types import SimpleNamespace
+
+    shadow = SimpleNamespace(id=algo.id, parsed_rule=algo.parsed_rule, symbols=sample, style=algo.style)
+    rows = []
+    _tf_progress[algo.id] = {"done": 0, "total": len(tfs), "current": None}
+    for k, tf in enumerate(tfs):
+        label, days = TF_WINDOWS[tf]
+        _tf_progress[algo.id].update(current=label)
+        try:
+            rep = backtest_on(db, shadow, md, tf, days)
+            m = rep["metrics"]
+            rows.append({"timeframe": tf, "label": label, "days": days, "metrics": m, "bars": rep["config"]["bars"],
+                         "failed": len(rep["failed_symbols"]), "equity": rep["equity"][-120:]})
+        except Exception as e:
+            rows.append({"timeframe": tf, "label": label, "days": days, "error": str(e)[:300]})
+        _tf_progress[algo.id]["done"] = k + 1
+    scored = [r for r in rows if r.get("metrics") and r["metrics"]["trades"] >= 10]
+    best = max(scored, key=lambda r: (r["metrics"]["profit_factor"] or 0) * min(1.0, r["metrics"]["trades"] / 30), default=None)
+    out = {"at": utcnow().isoformat(), "algo_id": algo.id, "rows": rows, "best": best["timeframe"] if best else None,
+           "symbols_tested": sample, "symbols_total": len(syms_all), "style": algo.style.value}
+    key = f"_tf_backtest_{algo.id}"
+    row = db.get(AppSetting, key)
+    if row is None:
+        db.add(AppSetting(key=key, value=out, updated_at=utcnow()))
+    else:
+        row.value, row.updated_at = out, utcnow()
+    db.commit()
+    _tf_progress.pop(algo.id, None)
+    return out
+
+
+def timeframe_results(db: Session, algo_id: int) -> dict | None:
+    from syena.models import AppSetting
+
+    row = db.get(AppSetting, f"_tf_backtest_{algo_id}")
+    return row.value if row else None
 
 
 def start(db: Session, algo: Algo) -> Algo:
@@ -178,7 +241,13 @@ def completed_bars(df: pd.DataFrame, timeframe: str, now: datetime) -> pd.DataFr
     last = df.index[-1].to_pydatetime()
     if timeframe == "day":
         return df if now - last >= timedelta(hours=10) else df.iloc[:-1]  # today's daily bar closes 15:30
-    return df if now >= last + timedelta(minutes=BAR_MINUTES[timeframe]) else df.iloc[:-1]
+    end = last + timedelta(minutes=BAR_MINUTES[timeframe])
+    if timeframe in ("60minute", "240minute"):  # the session's last candle ends at the 15:30 close, not a full hour/4 hours later
+        from syena.market.calendar import IST
+
+        close = datetime.combine(last.astimezone(IST).date(), datetime.min.time().replace(hour=15, minute=30), IST)
+        end = min(end, close)
+    return df if now >= end else df.iloc[:-1]
 
 
 def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_factory=None) -> list[int]:
@@ -191,7 +260,7 @@ def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_f
     # Positions in stocks no longer on the algo's list (e.g. they left its screen) are still managed to the end:
     # sold now if the screen says "sell when a stock leaves", otherwise by the exit rule (and stop/target as always).
     listed = set(algo.symbols or [])
-    orphans = [t for t in db.scalars(select(Trade).where(Trade.algo_id == algo.id, Trade.status == TradeStatus.OPEN))
+    orphans = [t for t in db.scalars(select(Trade).where(Trade.algo_id == algo.id, Trade.status == TradeStatus.OPEN, Trade.instrument == "EQ"))
                if t.stock not in listed]
     if orphans:
         from syena.screener.screens import linked_screens
@@ -214,6 +283,15 @@ def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_f
             continue
         bar_ts = df.index[-1].isoformat()
         open_trade = db.scalar(select(Trade).where(Trade.algo_id == algo.id, Trade.stock == sym, Trade.status == TradeStatus.OPEN))
+        opt_trade = next((t for t in db.scalars(select(Trade).where(Trade.algo_id == algo.id, Trade.instrument == "OPT",
+                                                                     Trade.status.in_((TradeStatus.OPEN, TradeStatus.PENDING))))
+                          if (t.option or {}).get("underlying") == sym), None)
+        if opt_trade:  # option positions exit on their premium stop/target, the exit rule, or before expiry
+            if opt_trade.status == TradeStatus.OPEN and rule.get("exit") and bool(evaluate(df, rule["exit"]).iloc[-1]):
+                d = engine.exit_trade(db, opt_trade, "exit_rule", md.ltp([opt_trade.stock]).get(opt_trade.stock) or opt_trade.last_price,
+                                      broker_factory=broker_factory, detail={"rule": describe_rule(rule)})
+                out.append(d.id)
+            continue
         if open_trade:
             if rule.get("exit") and bool(evaluate(df, rule["exit"]).iloc[-1]):
                 d = engine.exit_trade(db, open_trade, "exit_rule", float(df["close"].iloc[-1]), broker_factory=broker_factory,
@@ -232,6 +310,16 @@ def tick_algo(db: Session, algo: Algo, md, now: datetime | None = None, broker_f
                      indicators={"snapshot": snapshot(df, rule)}, price_at_signal=price, ts=now)
         db.add(sig)
         db.flush()
+        if (algo.instrument or "EQ") == "OPT":  # trade the signal with a call option instead of shares (paper)
+            from syena.market.options_trade import enter_option
+
+            d = enter_option(db, md, sym, "BUY", source="algo", algo_id=algo.id, signal_id=sig.id, confidence=100.0,
+                             reasoning={"rule": describe_rule(rule), "indicators": snapshot(df, rule)},
+                             inputs={"bar_ts": bar_ts, "timeframe": algo.timeframe, "underlying_price": price},
+                             extra_checks=[Check("rule_signal", True, sig.reasoning)], idempotency_key=f"algo{algo.id}-{sym}-{bar_ts}-opt",
+                             setup=setup, now=now, broker_factory=broker_factory)
+            out.append(d.id)
+            continue
         consult = pretrade.consult(db, setup, None)
         stop, target = _risk_prices(rule, df, price, algo.style, db, consult.stop_factor)
         if not stop < price < target:

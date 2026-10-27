@@ -1,5 +1,5 @@
-"""Zone retest strategy (Umar Punjabi method): no look-ahead, his rules hold on every signal, and the lab / algo /
-backtest / API plumbing works."""
+"""Zone confluence strategy: no look-ahead, every signal meets its own rules, and the lab / algo / backtest / API
+plumbing works."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -34,23 +34,27 @@ def test_signals_never_use_future_candles():
 
 
 @pytest.mark.parametrize("seed", range(6))
-def test_every_signal_follows_his_rules(seed):
+def test_every_signal_follows_the_rules(seed):
     df = _df(seed=seed)
     s = zt.signals(df)
     for ts, r in s[s["signal"]].iterrows():
         c = float(df.loc[ts, "close"]); o = float(df.loc[ts, "open"])
-        assert r["bias"] == 1 and r["htf_bias"] != -1                          # buy team only
+        assert r["bias"] == 1 and r["htf_bias"] != -1                          # bullish structure only
+        assert r["score"] >= 60 and r["reason"].startswith("score ")
         assert r["stop"] < r["zone_low"] + 1e-9 and r["stop"] < float(df.loc[ts, "low"])  # stop beyond zone and wick
         assert float(df.loc[ts, "low"]) <= r["zone_high"]                     # price came back into the zone
         assert r["rr"] >= 2.0 - 1e-6 and r["target"] > c > r["stop"]          # at least 1:2
-        assert c > o or "confirmation" in r["reason"]
+        assert c > o or "reversal pattern" in r["reason"]
 
 
 def test_versions_change_what_is_traded():
     df = _df(seed=5)
     base = zt.signals(df)
     fib = zt.signals(df, {"require_fib": True})
-    fixed = zt.signals(df, {"target_mode": "fixed2"})
+    fixed = zt.signals(df, {"target_mode": "fixed"})
+    strict = zt.signals(df, {"min_score": 80})
+    assert strict["signal"].sum() <= base["signal"].sum() and (strict[strict["signal"]]["score"] >= 80).all()
+    assert zt.canon_params({"target_mode": "fixed2"})["target_mode"] == "fixed"  # older saved rules still load
     assert fib["signal"].sum() <= base["signal"].sum()
     assert fib[fib["signal"]]["fib"].all()
     for _, r in fixed[fixed["signal"]].iterrows():
@@ -60,10 +64,10 @@ def test_versions_change_what_is_traded():
 
 
 def test_rule_backtest_uses_the_strategy_stop_and_target():
-    rule = strategylab.rule_for("base")
+    rule = strategylab.rule_for("balanced")
     assert rule["stop_loss"] == {"type": "strategy"} and rule["entry"]["op"] == "strategy"
     text = describe_rule(rule)
-    assert "Zone retest" in text and "beyond the demand zone" in text and "next strong resistance" in text
+    assert "Zone confluence" in text and "60/100" in text and "next strong resistance" in text
     df = _df(seed=3)
     assert evaluate(df, rule["entry"]).sum() == zt.signals(df)["signal"].sum()
     res = backtest.run(df, rule, backtest.BacktestConfig(max_hold_days=30, starting_capital=1e9))
@@ -82,7 +86,7 @@ def test_strategy_stop_needs_a_strategy_entry():
 def test_current_setup_explains_the_chart():
     out = zt.current_setup(_df(seed=3))
     assert out["available"] and out["bias"] and isinstance(out["recent"], list)
-    assert all("retest" in r["why"] for r in out["recent"])
+    assert all(r["why"].startswith("score") for r in out["recent"])
 
 
 class MD:
@@ -97,7 +101,7 @@ def test_lab_tests_every_version_and_makes_an_algo(db):
         if row["works"]:
             assert row["trades"] >= 40 and row["early"]["avg_return_pct"] > 0 and row["late"]["avg_return_pct"] > 0
     assert strategylab.latest(db)["at"] == out["at"]
-    a, readable = strategylab.create_algo(db, "fixed2", ["AAA"])
+    a, readable = strategylab.create_algo(db, "fixed", ["AAA"])
     got = db.get(Algo, a.id)
     assert got.status == "DRAFT" and got.run_mode == "PAPER" and got.parsed_rule["target"] == {"type": "strategy"}
     assert "1:2" in readable
@@ -105,5 +109,15 @@ def test_lab_tests_every_version_and_makes_an_algo(db):
 
 def test_strategy_lab_api(authed):
     r = authed.get("/api/pattern-lab/strategy").json()
-    assert r["latest"] is None and "base" in r["variants"]
+    assert r["latest"] is None and "balanced" in r["variants"]
     assert authed.post("/api/pattern-lab/strategy/algo", json={"variant": "nope"}).status_code == 400
+
+
+def test_strategy_can_be_written_in_plain_english():
+    from syena.algos import parser
+
+    o = parser.parse("buy on zone confluence setup", use_llm=False)
+    assert o.status == "ok" and o.rule["entry"]["op"] == "strategy" and o.rule["stop_loss"] == {"type": "strategy"}
+    o = parser.parse("buy when zone confluence score above 75 and rsi 14 < 60, target 8%", use_llm=False)
+    st = o.rule["entry"]["args"][0]
+    assert st["params"]["min_score"] == 75 and o.rule["target"] == {"type": "pct", "value": 8.0}

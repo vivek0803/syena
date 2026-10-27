@@ -28,7 +28,7 @@ DATA_RULE = (
 )
 
 RULE_PARSER = Prompt(
-    "rule_parser", "v4",
+    "rule_parser", "v5",
     "You convert plain-English trading rules for NSE stocks into a strict JSON rule. " + DATA_RULE + "\n"
     "Supported indicators: sma(n), ema(n), wma(n), rsi(n), macd(fast,slow,signal) with outputs macd|signal|hist, "
     "bbands(n,std) with outputs upper|middle|lower, atr(n), vwap, stoch(k,d,smooth) outputs k|d, adx(n), "
@@ -42,16 +42,24 @@ RULE_PARSER = Prompt(
     "zone above price (its bottom), built from clustered swing highs/lows; 'breaks above resistance' is close cross_above "
     "resistance_zone, 'bounces off support' is low <= support_zone and close > support_zone. Plain 'support'/'resistance' "
     "means these zones; only 'trendline support/resistance' means the sloping lines.\n"
-    "Candlestick patterns are a node: {\"op\":\"pattern\",\"name\":NAME} with NAME one of hammer, inverted_hammer, "
-    "bullish_engulfing, piercing_line, morning_star, three_white_soldiers, bullish_harami, tweezer_bottom, dragonfly_doji, "
-    "bullish_marubozu, shooting_star, hanging_man, bearish_engulfing, dark_cloud_cover, evening_star, three_black_crows, "
-    "bearish_harami, tweezer_top, gravestone_doji, bearish_marubozu, doji, spinning_top, inside_bar, outside_bar, gap_up, "
-    "gap_down, any_bullish (any bullish reversal pattern), any_bearish.\n"
+    "Candlestick patterns are a node: {\"op\":\"pattern\",\"name\":NAME} (add \"confirm\":true when the rule asks for a "
+    "confirmed pattern: the next candle closes beyond the pattern candle) with NAME one of hammer, inverted_hammer, "
+    "bullish_engulfing, piercing_line, morning_star, morning_doji_star, three_white_soldiers, three_inside_up, "
+    "three_outside_up, bullish_harami, tweezer_bottom, dragonfly_doji, abandoned_baby_bull, bullish_kicker, "
+    "bullish_belt_hold, bullish_counterattack, homing_pigeon, bullish_marubozu, rising_three_methods, upside_tasuki_gap, "
+    "inside_bar_breakout_up, shooting_star, hanging_man, bearish_engulfing, dark_cloud_cover, evening_star, "
+    "evening_doji_star, three_black_crows, three_inside_down, three_outside_down, bearish_harami, tweezer_top, "
+    "gravestone_doji, abandoned_baby_bear, bearish_kicker, bearish_belt_hold, bearish_counterattack, bearish_marubozu, "
+    "falling_three_methods, downside_tasuki_gap, inside_bar_breakout_down, doji, long_legged_doji, spinning_top, "
+    "inside_bar, outside_bar, nr7, gap_up, gap_down, any_bullish (any bullish reversal pattern), any_bearish, "
+    "any_bullish_continuation, any_bearish_continuation. Reversal patterns already require the prior move. "
+    "'in an uptrend' = close > sma(50); 'on high volume' = volume > volume_sma(20); 'at support' = low <= support_zone "
+    "and close > support_zone.\n"
     "Operand JSON: {\"kind\":\"indicator\",\"name\":..,\"params\":{..},\"output\":..} or {\"kind\":\"price\",\"field\":\"close\"} "
     "or {\"kind\":\"value\",\"value\":30}.\n"
     "Node JSON: {\"op\":\"compare\",\"left\":Operand,\"cmp\":\">\"|\">=\"|\"<\"|\"<=\",\"right\":Operand} | "
     "{\"op\":\"cross_above\"|\"cross_below\",\"left\":Operand,\"right\":Operand} | {\"op\":\"and\"|\"or\",\"args\":[Node,..]} | "
-    "{\"op\":\"not\",\"arg\":Node} | {\"op\":\"pattern\",\"name\":NAME}.\n"
+    "{\"op\":\"not\",\"arg\":Node} | {\"op\":\"pattern\",\"name\":NAME,\"confirm\":bool?}.\n"
     "Output ONLY JSON: {\"status\":\"ok\",\"entry\":Node,\"exit\":Node|null,\"side\":\"BUY\",\"stop_loss\":{..}|null,"
     "\"target\":{..}|null,\"notes\":\"..\"} where stop_loss/target are {\"type\":\"pct\",\"value\":2} or "
     "{\"type\":\"atr\",\"mult\":1.5}; OR {\"status\":\"clarify\",\"question\":\"..\",\"reason\":\"ambiguous|unsupported\"}.\n"
@@ -195,12 +203,13 @@ IMAGE_READER = Prompt(
 )
 
 STOCK_COMPARE = Prompt(
-    "stock_compare", "v3",
+    "stock_compare", "v4",
     "You explain a ranking of NSE-listed stocks the user picked, for the stated horizon. The scores were already "
     "computed by a FIXED formula: each metric is ranked against the other stocks in the list (best = 100), metrics are "
-    "averaged into categories and the categories weighted. Long-term: quality (ROE, ROA, margins) 35%, growth (sales, "
-    "profit) 30%, valuation (P/E, P/B, EV/EBITDA, earnings yield) 25%, balance sheet (debt/equity, current ratio; "
-    "ignored for banks and lenders) 10%. Swing: momentum (1/3/6-month returns, distance from 50/200-day averages, RSI near "
+    "averaged into categories and the categories weighted. Long-term: quality (ROE, ROA, margins, 3-year ROE and ROCE) "
+    "30%, growth (sales and profit, latest year and 3-year CAGR) 30%, valuation (P/E, P/B, EV/EBITDA, earnings yield, "
+    "free-cash-flow yield) 25%, balance sheet (debt/equity, current ratio; ignored for banks and lenders) 10%, ownership "
+    "(change in FII, DII and promoter holding last quarter) 5%. Swing: momentum (1/3/6-month returns, distance from 50/200-day averages, RSI near "
     "60) 60%, risk (volatility, max fall) 20%, valuation 10%, size/liquidity 10%. Use ONLY the figures provided: never add "
     "facts, prices or news from memory. " + DATA_RULE + "\n"
     "Do NOT re-score the stocks. You may adjust a stock's score by at most 10 points, only for something the formula "
@@ -271,4 +280,31 @@ MISSED_MOVES = Prompt(
     "Day: {day}\nMarket: {market}\n\nMovers:\n{movers}",
 )
 
-ALL = {p.name: p for p in [ASK_AI, MACRO_IMPACT, MISSED_MOVES, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}
+COMPANY_EXTRACT = Prompt(
+    "company_extract", "v1",
+    "You find the Indian listed companies a news item is about. " + DATA_RULE + "\n"
+    "List every company that is a subject of the item (not one only mentioned in passing), with its NSE symbol if you "
+    "know it and its full registered name. Use the company's current listed name when a brand is used (e.g. Zomato -> "
+    "Eternal Ltd, ETERNAL; Paytm -> One 97 Communications, PAYTM; Nykaa -> FSN E-Commerce Ventures, NYKAA). Leave out "
+    "unlisted companies, foreign companies not listed in India, and indices. If none, return an empty list.\n"
+    "Output ONLY JSON: {\"companies\":[{\"name\":\"..\",\"symbol\":\"..\"|null}]}",
+    "News item:\n{item}",
+)
+
+TOP_NEWS = Prompt(
+    "top_news", "v1",
+    "You are the evening editor of an Indian stock-market desk. " + DATA_RULE + "\n"
+    "From the day's news items (each has an id, the stocks it was linked to and Syena's AI verdict if any) pick the 10 "
+    "that matter most for NSE investors tomorrow: big company events (results far from expectations, large orders, "
+    "acquisitions, fund raises, approvals, rating changes, management exits, fraud, regulatory action) and broad "
+    "developments that move whole sectors or the market (policy, rates, crude, currency, tariffs, global shocks). "
+    "Skip routine filings, price commentary, market wraps, tips and duplicates of the same story. Rank by expected "
+    "impact on prices. For each: the item id, a plain one-line headline you write, two short sentences on why it "
+    "matters, the affected NSE symbols (from the item's linked stocks, or sector names for broad news), the likely "
+    "direction (positive, negative or mixed) and impact (high, medium, low).\n"
+    "Output ONLY JSON: {\"top\":[{\"id\":int,\"headline\":\"..\",\"why\":\"..\",\"symbols\":[\"..\"],"
+    "\"direction\":\"positive|negative|mixed\",\"impact\":\"high|medium|low\"}],\"market_mood\":\"one sentence\"}",
+    "Date: {day}\nMarket today: {market}\n\nNews items:\n{items}",
+)
+
+ALL = {p.name: p for p in [COMPANY_EXTRACT, TOP_NEWS, ASK_AI, MACRO_IMPACT, MISSED_MOVES, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}

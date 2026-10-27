@@ -1,5 +1,5 @@
 import { Briefcase, CalendarSearch, CandlestickChart, FlaskConical, Gauge, GraduationCap, HandCoins, LayoutDashboard, ListFilter, LucideIcon,
-  MessagesSquare, Newspaper, PieChart, ReceiptText, Scale, ScrollText, Settings, SquareTerminal, Workflow } from "lucide-react";
+  MessagesSquare, Newspaper, Flame, Layers, PieChart, ReceiptText, Scale, ScrollText, Settings, SquareTerminal, Workflow } from "lucide-react";
 
 /** Each area of the app has its own accent: it tints the menu icons and the page header. */
 export type Accent = { name: string; hex: string };
@@ -12,9 +12,9 @@ export const ACCENTS: Record<string, Accent> = {
 
 export type NavItem = { to: string; label: string; icon: LucideIcon; group: string };
 export const NAV: { group: string; items: NavItem[] }[] = [
-  ["Overview", [["/", "Dashboard", LayoutDashboard], ["/decisions", "Decision log", ScrollText]]],
+  ["Overview", [["/", "Dashboard", LayoutDashboard], ["/top-news", "Top news", Flame], ["/decisions", "Decision log", ScrollText]]],
   ["Trade", [["/algos", "Algo builder", Workflow], ["/pattern-lab", "Pattern lab", FlaskConical], ["/invest", "Manual invest", HandCoins],
-    ["/screener", "Screener", ListFilter], ["/compare", "Compare stocks", Scale], ["/stock", "Stock charts", CandlestickChart],
+    ["/screener", "Screener", ListFilter], ["/compare", "Compare stocks", Scale], ["/stock", "Stock charts", CandlestickChart], ["/options", "Option chain", Layers],
     ["/trades", "Trades & positions", Briefcase], ["/orders", "Orders", ReceiptText]]],
   ["Understand", [["/ask", "Syena AI", MessagesSquare], ["/news", "News feed", Newspaper], ["/review", "Daily review", CalendarSearch],
     ["/portfolio", "Portfolio X-Ray", PieChart], ["/evals", "Evals", Gauge], ["/learning", "Learning", GraduationCap]]],

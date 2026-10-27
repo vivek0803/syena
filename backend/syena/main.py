@@ -11,6 +11,8 @@ from syena.api import admin, algos, auth, compare, health, intel, logs, mode, po
 from syena.api import ask as ask_api
 from syena.api import patternlab as patternlab_api
 from syena.api import review as review_api
+from syena.api import topnews as topnews_api
+from syena.api import options as options_api
 from syena.config import get_settings
 from syena.db import SessionLocal
 from syena.logging_setup import configure_logging
@@ -102,6 +104,8 @@ def create_app(run_startup: bool = True) -> FastAPI:
     app.include_router(ask_api.router)
     app.include_router(patternlab_api.router)
     app.include_router(review_api.router)
+    app.include_router(topnews_api.router)
+    app.include_router(options_api.router)
     app.include_router(admin.router)
     app.include_router(admin.public_router)
 

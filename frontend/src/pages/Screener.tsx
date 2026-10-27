@@ -7,22 +7,26 @@ import { day, money, when } from "../lib/format";
 import { useAct, useApi } from "../lib/hooks";
 
 const n = (v: any, d = 1) => (v === null || v === undefined ? "–" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d }));
-const cols = [
-  { key: "symbol", label: "Stock", className: "whitespace-normal min-w-[160px]", render: (r: any) => <><StockLink symbol={r.symbol} /><div className="text-[13px] text-mute">{r.name ?? ""}</div></> },
-  { key: "price", label: "Price", align: "right" as const, render: (r: any) => n(r.price, 2) },
-  { key: "change", label: "Day %", align: "right" as const, render: (r: any) => <span className={r.change > 0 ? "text-gain" : r.change < 0 ? "text-loss" : ""}>{n(r.change, 2)}</span> },
-  { key: "market_cap", label: "Mcap ₹cr", align: "right" as const, render: (r: any) => n(r.market_cap, 0) },
-  { key: "pe", label: "P/E", align: "right" as const, render: (r: any) => n(r.pe) },
-  { key: "pb", label: "P/B", align: "right" as const, render: (r: any) => n(r.pb) },
-  { key: "roe", label: "ROE %", align: "right" as const, render: (r: any) => n(r.roe) },
-  { key: "debt_to_equity", label: "D/E", align: "right" as const, render: (r: any) => n(r.debt_to_equity, 2) },
-  { key: "sales_growth", label: "Sales gr %", align: "right" as const, render: (r: any) => n(r.sales_growth) },
-  { key: "profit_growth", label: "Profit gr %", align: "right" as const, render: (r: any) => n(r.profit_growth) },
-  { key: "dividend_yield", label: "Div yld %", align: "right" as const, render: (r: any) => n(r.dividend_yield, 2) },
-  { key: "pct_from_52w_high", label: "vs 52w high %", align: "right" as const, render: (r: any) => n(r.pct_from_52w_high) },
-];
+const num = (key: string, label: string, d = 1, colour = false) => ({
+  key, label, align: "right" as const,
+  render: (r: any) => colour ? <span className={r[key] > 0 ? "text-gain" : r[key] < 0 ? "text-loss" : ""}>{r[key] > 0 ? "+" : ""}{n(r[key], d)}</span> : n(r[key], d),
+});
+const stockCol = { key: "symbol", label: "Stock", className: "whitespace-normal min-w-[160px]", render: (r: any) => <><StockLink symbol={r.symbol} /><div className="text-[13px] text-mute">{r.name ?? ""}</div></> };
+const VIEWS: Record<string, { label: string; cols: any[] }> = {
+  overview: { label: "Overview", cols: [stockCol, num("price", "Price", 2), num("change", "Day %", 2, true), num("market_cap", "Mcap ₹cr", 0), num("pe", "P/E"), num("pb", "P/B"),
+    num("roe", "ROE %"), num("debt_to_equity", "D/E", 2), num("sales_growth", "Sales gr %"), num("profit_growth", "Profit gr %"), num("dividend_yield", "Div yld %", 2), num("pct_from_52w_high", "vs 52w high %")] },
+  growth: { label: "3-year quality & growth", cols: [stockCol, num("market_cap", "Mcap ₹cr", 0), num("sales_cagr_3y", "Sales CAGR 3y %"), num("profit_cagr_3y", "Profit CAGR 3y %"),
+    num("eps_cagr_3y", "EPS CAGR 3y %"), num("roe_3y", "ROE 3y avg %"), num("roce_3y", "ROCE 3y avg %"), num("opm_3y", "OPM 3y avg %"), num("roe", "ROE now %"), num("pe", "P/E")] },
+  cash: { label: "Cash flow", cols: [stockCol, num("market_cap", "Mcap ₹cr", 0), num("operating_cash_flow", "Op. cash flow ₹cr", 0), num("free_cash_flow", "Free cash flow ₹cr", 0),
+    num("fcf_3y_avg", "FCF 3y avg ₹cr", 0), num("fcf_yield", "FCF yield %", 2), num("debt_to_equity", "D/E", 2), num("pe", "P/E")] },
+  holding: { label: "Shareholding", cols: [stockCol, num("market_cap", "Mcap ₹cr", 0), num("promoter_holding", "Promoter %"), num("promoter_change", "Δ promoter", 2, true),
+    num("fii_holding", "FII %"), num("fii_change", "Δ FII", 2, true), num("dii_holding", "DII %"), num("dii_change", "Δ DII", 2, true), num("mf_holding", "MF %"), num("retail_holding", "Retail %")] },
+};
+const cols = VIEWS.overview.cols;
 const examples = [
   "roe > 15 and debt to equity < 0.5 and sales growth > 15 and market cap > 1000",
+  "3 year roe > 15 and sales cagr > 12 and fcf yield > 3",
+  "fii change > 0.5 and dii change > 0 and promoter change >= 0 and market cap > 2000",
   "pe < 15 and pb < 2 and dividend yield > 2",
   "profit growth > 25 and roe > 18 and pct_from_52w_high > -10",
 ];
@@ -50,7 +54,7 @@ function DataStatus() {
         <Stat label="Prices as of" value={s.latest_day ? day(s.latest_day) : "not yet"} sub={s.priced_latest_day ? `${n(s.priced_latest_day, 0)} stocks` : undefined} />
         <Stat label="Background jobs" value={Object.keys(s.jobs ?? {}).length ? "" : "idle"} sub={Object.entries(s.jobs ?? {}).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(" · ")} />
       </div>
-      <p className="mt-3 text-[13px] text-mute">Prices and ratios update every trading day at 4:05 PM. Company figures (EPS, book value, ROE, debt, growth…) refresh automatically each night, about 400 stocks at a time, so every stock is re-checked weekly and new quarterly results flow in on their own. Source: Yahoo Finance (free, unofficial), or your Screener.in export.</p>
+      <p className="mt-3 text-[13px] text-mute">Prices and ratios update every trading day at 4:05 PM. Company figures (EPS, book value, ROE, debt, growth, cash flow and 3-year averages from the annual reports) refresh automatically each night, about 400 stocks at a time, so every stock is re-checked weekly and new quarterly results flow in on their own. Source: Yahoo Finance (free, unofficial), or your Screener.in export. Shareholding (promoter, FII, DII, mutual funds, retail) comes from the quarterly filings on NSE: new filings are read every 30 minutes, older ones a batch each night.</p>
       <ErrorNote error={refresh.error} />
       {toast.node}
       <CsvModal open={csvOpen} onClose={() => setCsvOpen(false)} />
@@ -99,9 +103,10 @@ function AllStocks() {
   const [sort, setSort] = useState("market_cap");
   const [desc, setDesc] = useState(true);
   const [page, setPage] = useState(0);
+  const [view, setView] = useState("overview");
   const qs = new URLSearchParams({ where: applied, q, sort, desc: String(desc), limit: "100", offset: String(page * 100) });
   const { data, error, isLoading } = useApi<any>(`/api/screener/stocks?${qs}`);
-  const sortable = cols.map((c) => ({ ...c, label: <button className="hover:text-parch" onClick={() => { setSort(c.key === "symbol" ? "symbol" : c.key); setDesc(sort === c.key ? !desc : true); setPage(0); }}>{c.label}{sort === c.key ? (desc ? " ↓" : " ↑") : ""}</button> as any }));
+  const sortable = VIEWS[view].cols.map((c) => ({ ...c, label: <button className="hover:text-parch" onClick={() => { setSort(c.key === "symbol" ? "symbol" : c.key); setDesc(sort === c.key ? !desc : true); setPage(0); }}>{c.label}{sort === c.key ? (desc ? " ↓" : " ↑") : ""}</button> as any }));
   return (
     <Panel>
       <form className="mb-4 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); setApplied(where); setPage(0); }}>
@@ -111,6 +116,9 @@ function AllStocks() {
       </form>
       <ErrorNote error={error} />
       {isLoading ? <Loading /> : data && (<>
+        <div className="mb-3 flex flex-wrap gap-1.5">{Object.entries(VIEWS).map(([k, v]) => (
+          <button key={k} type="button" onClick={() => setView(k)}
+            className={`rounded-md px-2.5 py-1 text-[13px] ${view === k ? "bg-saffron/15 text-saffron" : "text-mute hover:text-parch"}`}>{v.label}</button>))}</div>
         <p className="mb-2 text-sm text-mute">{n(data.total, 0)} stocks{data.day ? ` · prices of ${day(data.day)}` : " · prices not loaded yet: click 'Update prices now'"}</p>
         <Table cols={sortable} rows={data.rows} rowKey={(r: any) => r.symbol} />
         <div className="mt-3 flex gap-2">
@@ -136,7 +144,7 @@ function ScreenForm({ initial, onDone, id }: { initial?: any; onDone: (s: any) =
   return (
     <form onSubmit={submit} className="space-y-3">
       <Field label="Name"><input className="input" required value={f.name} onChange={set("name")} placeholder="Quality growth" /></Field>
-      <Field label="Conditions" hint={<>Fields: P/E, P/B, market cap (₹ cr), ROE, ROA, debt to equity, sales growth, profit growth, OPM, net margin, dividend yield, earnings yield, EV/EBITDA, promoter holding, price, % from 52 week high… e.g. <i>{examples[0]}</i></>}>
+      <Field label="Conditions" hint={<>Fields: P/E, P/B, market cap (₹ cr), ROE, ROA, debt to equity, sales growth, profit growth, OPM, net margin, dividend yield, earnings yield, EV/EBITDA, price, % from 52 week high; 3-year: sales CAGR, profit CAGR, EPS CAGR, 3 year ROE, 3 year ROCE, 3 year OPM; cash: free cash flow (₹ cr), FCF yield, operating cash flow, 3 year free cash flow; ownership: promoter / FII / DII / MF / retail holding and FII change, DII change, promoter change (last quarter, points)… e.g. <i>{examples[0]}</i></>}>
         <textarea className="input min-h-[80px]" required value={f.conditions} onChange={set("conditions")} />
       </Field>
       <Field label="Technical signal on the stocks that pass (optional)" hint="Same language as algos, e.g. “RSI 14 crosses above 50 and close > EMA 50”. Checked daily after close.">

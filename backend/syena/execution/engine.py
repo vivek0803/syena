@@ -58,6 +58,10 @@ class TradeIntent:
     circuit: dict | None = None  # {"lower": x, "upper": y} when known
     order_type: str | None = None  # override; default from settings (LIMIT preferred)
     limit_price: float | None = None
+    instrument: str = "EQ"  # EQ (shares) | OPT (an option contract, bought; PAPER only)
+    option: dict | None = None  # {underlying, expiry, strike, type, lot_size, ...} for OPT
+    lots: int | None = None  # OPT: fixed number of lots (else sized from the options budget)
+    max_hold_until: datetime | None = None  # override the style's holding period (options: before expiry)
 
 
 BrokerFactory = "callable[[Session, str], Broker]"
@@ -75,11 +79,15 @@ def default_broker_factory(md=None):
     return factory
 
 
-def product_for(style: Style) -> str:
+def product_for(style: Style, instrument: str = "EQ") -> str:
+    if instrument == "OPT":
+        return "MIS" if style == Style.INTRADAY else "NRML"
     return "MIS" if style == Style.INTRADAY else "CNC"
 
 
 def effective_mode(db: Session, intent: TradeIntent) -> tuple[str, Check]:
+    if intent.instrument == "OPT":  # options are simulated only: never sent to Zerodha
+        return "PAPER", Check("mode", True, "options are paper-traded only: simulated order")
     sys_mode = mode_service.current_mode(db)
     if sys_mode != TradingMode.LIVE:
         return "PAPER", Check("mode", True, "system is in PAPER mode: simulated order")
@@ -119,15 +127,41 @@ def base_checks(db: Session, intent: TradeIntent, mode: str, now: datetime) -> t
     if intent.style == Style.INTRADAY and open_now:
         ok = calendar.before(now, styles["intraday_entry_cutoff"])
         checks.append(Check("intraday_cutoff", ok, f"cutoff {styles['intraday_entry_cutoff']} IST"))
-    sz = size_position(intent.ref_price, sizing["min_amount"], sizing["max_amount"])
+    if intent.instrument == "OPT":
+        from syena.execution.sizing import size_option
+
+        ocfg = settings_store.get(db, "options")
+        sz = size_option(intent.ref_price, int((intent.option or {}).get("lot_size") or 1), float(ocfg["min_premium"]),
+                         float(ocfg["max_premium"]), int(ocfg["max_lots"]), intent.lots)
+    else:
+        sz = size_position(intent.ref_price, sizing["min_amount"], sizing["max_amount"])
     checks.append(sz.as_check())
     if intent.circuit:
         lo, hi = intent.circuit.get("lower"), intent.circuit.get("upper")
         near = (hi and intent.ref_price >= hi * 0.995) or (lo and intent.ref_price <= lo * 1.005)
         checks.append(Check("circuit_limit", not near, f"price {intent.ref_price} vs circuit {lo}-{hi}"))
     if sz.ok:
-        checks.extend(check_risk(db, mode, intent.symbol, sz.amount, now))
+        if intent.instrument == "OPT":
+            checks.extend(option_risk(db, intent, now))
+        else:
+            checks.extend(check_risk(db, mode, intent.symbol, sz.amount, now))
     return checks, sz.qty, sz.amount, amo
+
+
+def option_risk(db: Session, intent: TradeIntent, now: datetime) -> list[Check]:
+    """Options have their own limits, so they don't take the equity strategies' slots."""
+    from syena.execution.risk import _ist_day_start
+
+    ocfg = settings_store.get(db, "options")
+    opens = list(db.scalars(select(Trade).where(Trade.instrument == "OPT", Trade.status.in_((TradeStatus.OPEN, TradeStatus.PENDING)))))
+    today = [t for t in db.scalars(select(Trade).where(Trade.instrument == "OPT", Trade.created_at >= _ist_day_start(now)))
+             if t.status != TradeStatus.FAILED]
+    und = (intent.option or {}).get("underlying")
+    same = [t for t in opens if (t.option or {}).get("underlying") == und]
+    return [Check("options_enabled", bool(ocfg.get("enabled", True)), "option trading on" if ocfg.get("enabled", True) else "option trading is off (Settings → options)"),
+            Check("max_open_options", len(opens) < int(ocfg["max_open"]), f"{len(opens)} open option positions / limit {ocfg['max_open']}"),
+            Check("max_option_trades_per_day", len(today) < int(ocfg["max_per_day"]), f"{len(today)} option trades today / limit {ocfg['max_per_day']}"),
+            Check("one_position_per_underlying", not same, f"already holding {same[0].stock} on {und}" if same else f"no open option on {und}")]
 
 
 def _decision(db: Session, intent: TradeIntent, dtype: DecisionType, mode: str, summary: str,
@@ -150,7 +184,12 @@ def _record_order(db: Session, order: Order, res: OrderResult) -> None:
     order.fill_price, order.filled_qty = res.fill_price, res.filled_qty
     order.broker_order_id, order.message, order.attempts = res.broker_order_id, res.message, res.attempts
     if res.status == "COMPLETE" and not res.charges and res.fill_price:
-        res.charges = leg_charges(order.side, res.filled_qty, res.fill_price, order.product == "MIS").total
+        if order.product == "NRML" or (order.trade_id and getattr(db.get(Trade, order.trade_id), "instrument", "EQ") == "OPT"):
+            from syena.market.charges import option_leg_charges
+
+            res.charges = option_leg_charges(order.side, res.filled_qty, res.fill_price).total
+        else:
+            res.charges = leg_charges(order.side, res.filled_qty, res.fill_price, order.product == "MIS").total
     order.charges = res.charges
     order.updated_at = utcnow()
     db.add(OrderEvent(order_id=order.id, status=order.status.value, message=res.message))
@@ -187,7 +226,10 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
     styles = settings_store.get(db, "styles")
     hold_days = intent.max_hold_days or (styles["swing_max_holding_days"] if intent.style == Style.SWING else 0)
     max_hold = calendar.add_trading_days(now, hold_days, settings_store.get(db, "holidays")) if hold_days else None
-    trade = Trade(
+    if intent.max_hold_until:
+        max_hold = min(max_hold, intent.max_hold_until) if max_hold else intent.max_hold_until
+    trade = Trade(instrument=intent.instrument, option=({**intent.option, "lots": qty // max(1, int(intent.option.get("lot_size") or 1))}
+                                                       if intent.option else None),
         algo_id=intent.algo_id, signal_id=intent.signal_id, source=intent.source, mode=mode, style=intent.style,
         algo_condition=intent.algo_condition, stock=intent.symbol, side=intent.side, qty=qty, invested_amount=amount,
         exit_price_defined=intent.exit_condition, stop_loss=intent.stop_loss, target=intent.target,
@@ -205,7 +247,7 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
         # against this reference price and places a normal order itself.
         order = Order(idempotency_key=f"{key}-ENTRY", trade_id=trade.id, mode=mode, broker="kite" if mode == "LIVE" else "paper",
                       symbol=intent.symbol, side=intent.side, qty=qty, order_type="LIMIT", price=intent.ref_price,
-                      product=product_for(intent.style), purpose="ENTRY", variety="queued", status=OrderStatus.PLACED,
+                      product=product_for(intent.style, intent.instrument), purpose="ENTRY", variety="queued", status=OrderStatus.PLACED,
                       message="queued in Syena until the market opens")
         db.add(order)
         db.flush()
@@ -226,11 +268,11 @@ def enter(db: Session, intent: TradeIntent, broker_factory=None, now: datetime |
     variety = "regular"
     order = Order(idempotency_key=f"{key}-ENTRY", trade_id=trade.id, mode=mode, broker="kite" if mode == "LIVE" else "paper",
                   symbol=intent.symbol, side=intent.side, qty=qty, order_type=otype, price=limit,
-                  product=product_for(intent.style), purpose="ENTRY", variety=variety)
+                  product=product_for(intent.style, intent.instrument), purpose="ENTRY", variety=variety)
     db.add(order)
     db.flush()
     req = OrderRequest(order.idempotency_key, intent.symbol, intent.side, qty, order.product, "ENTRY",
-                       intent.ref_price, otype, limit, variety)
+                       intent.ref_price, otype, limit, variety, segment=intent.instrument)
     res = broker_factory(db, mode).place(db, req)
     _record_order(db, order, res)
 
@@ -288,13 +330,13 @@ def exit_trade(db: Session, trade: Trade, reason: str, ref_price: float, actor: 
     key = f"trade{trade.id}-EXIT-{len(prior) + 1}"  # new key per attempt: a rejected exit can be retried
     order = Order(idempotency_key=key, trade_id=trade.id, mode=trade.mode, broker="kite" if trade.mode == "LIVE" else "paper",
                   symbol=trade.stock, side=intent.side, qty=trade.qty, order_type="LIMIT",
-                  product=product_for(trade.style), purpose="EXIT")
+                  product=product_for(trade.style, trade.instrument or "EQ"), purpose="EXIT")
     db.add(order)
     db.flush()
     ocfg = settings_store.get(db, "orders")
     order.price = marketable_limit(intent.side, ref_price, ocfg["limit_buffer_bps"] * 3)  # wider buffer: exits must fill
     req = OrderRequest(key, trade.stock, intent.side, trade.qty, order.product, "EXIT", ref_price, "LIMIT", order.price,
-                       entry_price=trade.entry_price if trade.side == "SELL" else None)
+                       entry_price=trade.entry_price if trade.side == "SELL" else None, segment=trade.instrument or "EQ")
     res = broker_factory(db, trade.mode).place(db, req)
     _record_order(db, order, res)
     checks = [Check("exit_reason", True, reason), Check("broker", res.status == "COMPLETE", res.message)]

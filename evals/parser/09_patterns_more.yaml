@@ -1,0 +1,27 @@
+# Extra candlestick patterns and the words traders put around them (algos/patterns.py, parser._pattern_context)
+- id: pm-01
+  text: "buy when three inside up"
+  entry: pattern(three_inside_up)
+- id: pm-02
+  text: "buy when a bullish kicker forms and rsi 14 < 60"
+  entry: and(pattern(bullish_kicker), lt(rsi(14), 60))
+- id: pm-03
+  text: "buy when hammer at support"
+  entry: and(pattern(hammer), le(low, support), gt(close, support))
+- id: pm-04
+  text: "buy when bullish engulfing on high volume"
+  entry: and(pattern(bullish_engulfing), gt(volume, vol_sma(20)))
+- id: pm-05
+  text: "buy on morning doji star in an uptrend"
+  entry: and(pattern(morning_doji_star), gt(close, sma(50)))
+- id: pm-06
+  text: "buy when inside bar breakout, sell when inside bar breakdown"
+  entry: pattern(inside_bar_breakout_up)
+  exit: pattern(inside_bar_breakout_down)
+- id: pm-07
+  text: "buy when rising three methods, sell when any bearish pattern"
+  entry: pattern(rising_three_methods)
+  exit: pattern(any_bearish)
+- id: pm-08
+  text: "buy when hammer after a downtrend and close above sma 200"
+  entry: and(pattern(hammer), gt(close, sma(200)))

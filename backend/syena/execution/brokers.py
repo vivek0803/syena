@@ -32,6 +32,7 @@ class OrderRequest:
     limit_price: float | None = None
     variety: str = "regular"  # regular | amo (after-market order, executes at the next open)
     entry_price: float | None = None  # exits only: the position's entry price (paper margin for shorts)
+    segment: str = "EQ"  # EQ | OPT (option premium: F&O charges, paper only)
 
 
 @dataclass
@@ -103,7 +104,12 @@ class PaperBroker:
         if req.order_type == "LIMIT" and req.limit_price is not None:
             if (req.side == "BUY" and fill > req.limit_price) or (req.side == "SELL" and fill < req.limit_price):
                 return OrderResult("REJECTED", message=f"limit {req.limit_price} not marketable at {fill}")
-        charges = leg_charges(req.side, req.qty, fill, intraday=req.product == "MIS").total
+        if req.segment == "OPT":
+            from syena.market.charges import option_leg_charges
+
+            charges = option_leg_charges(req.side, req.qty, fill).total
+        else:
+            charges = leg_charges(req.side, req.qty, fill, intraday=req.product == "MIS").total
         wallet = get_wallet(db)
         gross = fill * req.qty
         if req.side == "BUY" and req.purpose == "EXIT" and req.entry_price:
@@ -134,6 +140,8 @@ class KiteBroker:
         self.sleep = sleep
 
     def place(self, db: Session, req: OrderRequest) -> OrderResult:
+        if req.segment == "OPT":  # options are paper-only in Syena: never send one to Zerodha
+            raise LiveOrderForbidden("KiteBroker refused an option order: Syena trades options in PAPER only")
         if req.purpose == "ENTRY" and self.mode_fn(db) != TradingMode.LIVE:
             raise LiveOrderForbidden("KiteBroker refused an ENTRY order while the system is not in LIVE mode")
         from kiteconnect import exceptions as kex

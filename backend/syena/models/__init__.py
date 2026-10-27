@@ -28,6 +28,8 @@ from syena.models.trading import (
     Event,
     Instrument,
     OAuthNonce,
+    OptionContract,
+    OptionOI,
     Order,
     OrderEvent,
     OrderStatus,
@@ -39,6 +41,6 @@ from syena.models.trading import (
     TradeStatus,
     WorkerHeartbeat,
 )
-from syena.models.screener import Screen, ScreenRun, Stock, StockDaily, Watchlist
+from syena.models.screener import Screen, ScreenRun, ShareholdingPattern, Stock, StockDaily, Watchlist
 
 __all__ = [n for n in dir() if not n.startswith("_")]

@@ -35,12 +35,29 @@ VOCAB = sorted({
     "candlestick", "pattern", "engulfing", "hammer", "inverted", "doji", "dragonfly", "gravestone", "harami", "marubozu",
     "soldiers", "crows", "tweezer", "tweezers", "piercing", "shooting", "star", "morning", "evening", "hanging", "spinning",
     "trendline", "trend", "inside", "outside", "gap", "forms", "appears", "reversal", "cloud", "cover", "dark", "three",
-    "white", "black", "bottom", "top", "support", "resistance", "zone", "bounces", "bounce", "holds",
+    "white", "black", "bottom", "top", "kicker", "kicking", "belt", "hold", "counterattack", "pigeon", "homing", "methods",
+    "rising", "falling", "tasuki", "confluence", "setup", "score", "scoring", "abandoned", "baby", "legged", "confirmed", "confirmation", "nr7", "continuation", "support", "resistance", "zone", "bounces", "bounce", "holds",
     "rejected", "breaks", "breakout", "breakdown", "tests", "touches", "near", "srs", "srr",
 })
 
 # phrase -> candlestick pattern name (longest phrases first so "inverted hammer" wins over "hammer")
 PATTERN_PHRASES = [
+    (r"(?:any )?bullish continuation (?:candlestick |candle )?pattern", "any_bullish_continuation"),
+    (r"(?:any )?bearish continuation (?:candlestick |candle )?pattern", "any_bearish_continuation"),
+    (r"three inside up", "three_inside_up"), (r"three inside down", "three_inside_down"),
+    (r"three outside up", "three_outside_up"), (r"three outside down", "three_outside_down"),
+    (r"morning doji star", "morning_doji_star"), (r"evening doji star", "evening_doji_star"),
+    (r"bullish abandoned baby|abandoned baby bottom|abandoned baby \(?bullish\)?", "abandoned_baby_bull"),
+    (r"bearish abandoned baby|abandoned baby top|abandoned baby \(?bearish\)?", "abandoned_baby_bear"),
+    (r"bullish kick(?:er|ing)(?: pattern)?", "bullish_kicker"), (r"bearish kick(?:er|ing)(?: pattern)?", "bearish_kicker"),
+    (r"bullish belt[- ]hold", "bullish_belt_hold"), (r"bearish belt[- ]hold", "bearish_belt_hold"),
+    (r"bullish counter[- ]?attack(?: line)?", "bullish_counterattack"), (r"bearish counter[- ]?attack(?: line)?", "bearish_counterattack"),
+    (r"homing pigeon", "homing_pigeon"), (r"rising three(?: methods)?", "rising_three_methods"),
+    (r"falling three(?: methods)?", "falling_three_methods"), (r"upside tasuki gap", "upside_tasuki_gap"),
+    (r"downside tasuki gap", "downside_tasuki_gap"),
+    (r"inside (?:bar|candle) break ?out(?: up(?:wards)?)?|inside (?:bar|candle) breaks? (?:above|up)", "inside_bar_breakout_up"),
+    (r"inside (?:bar|candle) break ?down|inside (?:bar|candle) breaks? (?:below|down)", "inside_bar_breakout_down"),
+    (r"long[- ]legged doji", "long_legged_doji"), (r"nr ?7|narrow(?:est)? range (?:of )?7(?: (?:bars|candles))?", "nr7"),
     (r"three white soldiers", "three_white_soldiers"), (r"three black crows", "three_black_crows"),
     (r"inverted hammer", "inverted_hammer"), (r"dragonfly doji", "dragonfly_doji"), (r"gravestone doji", "gravestone_doji"),
     (r"bullish engulfing", "bullish_engulfing"), (r"bearish engulfing", "bearish_engulfing"),
@@ -173,6 +190,7 @@ def _range_pass(t: str, notes: list[str]) -> str:
 
 def _pattern_pass(t: str, notes: list[str]) -> str:
     """Candlestick patterns -> pat_NAME tokens; trendlines -> tls_N (support) / tlr_N (resistance)."""
+    t = re.sub(r"\b(?:syena'?s? )?zone confluence\b", " zone_confluence ", t)
     t = re.sub(r"\btrend[\s-]+lines?\b", "trendline", t)
 
     def n_of(m, group=1):
@@ -210,6 +228,33 @@ def _pattern_pass(t: str, notes: list[str]) -> str:
     t = re.sub(r"(?<![a-z_])(?<!fib )(?<!fibonacci )(?:the )?resistance(?![a-z_])", "srr", t)
     for phrase, name in PATTERN_PHRASES:
         t = re.sub(r"\b(?:a |an |the )?" + phrase + r"(?: candlestick| candle)?(?: pattern)?\b", f" pat_{name} ", t)
+    return _pattern_context(t, notes)
+
+
+def _pattern_context(t: str, notes: list[str]) -> str:
+    """Words traders put around a candlestick pattern: confirmation, trend, volume and location."""
+    if "pat_" not in t:
+        return t
+    # confirmation: the next candle closes beyond the pattern candle
+    t = re.sub(r"\bconfirmed\s+pat_([a-z0-9_]+)", r" patc_\1 ", t)
+    t = re.sub(r"\bpat_([a-z0-9_]+)(?:\s+(?:candle|pattern))?\s+(?:is\s+|gets\s+)?(?:confirmed|with confirmation|followed by (?:a )?confirmation)"
+               r"(?:\s+(?:by|on) the next (?:candle|bar|day))?", r" patc_\1 ", t)
+    # "after a fall / after a rally": reversal patterns already require the prior move
+    if re.search(r"\bafter (?:a |an )?(?:down ?trend|fall|decline|sell-?off|correction|up ?trend|rally|rise|run-?up)\b", t):
+        t = re.sub(r"\s*\bafter (?:a |an )?(?:down ?trend|fall|decline|sell-?off|correction|up ?trend|rally|rise|run-?up)\b", " ", t)
+        notes.append("reversal patterns already require the move before them (a fall before bullish ones, a rise before bearish ones)")
+    up = r"\b(?:in|during|within) (?:an |a )?(?:up ?trend|rising trend)\b"
+    dn = r"\b(?:in|during|within) (?:an |a )?(?:down ?trend|falling trend)\b"
+    if re.search(up, t) or re.search(dn, t):
+        t = re.sub(up, " and close above sma 50 ", t)
+        t = re.sub(dn, " and close below sma 50 ", t)
+        notes.append("uptrend = close above the 50-candle simple moving average (downtrend = below it); edit the rule to use another definition")
+    vol = r"(?:with|on|and)\s+(?:a |an )?(?:high|heavy|strong|big|rising|above[- ]average)\s+volume|(?:with|on|and)\s+(?:a |an )?volume (?:spike|surge|expansion|confirmation)"
+    if re.search(vol, t):
+        t = re.sub(vol, " and volume above 20 day average volume ", t)
+        notes.append("high volume = volume above its 20-candle average")
+    # "hammer at support" -> pattern AND the location condition (the location phrases became '( ... )' above)
+    t = re.sub(r"\b(patc?_[a-z0-9_]+)\s+(?:candle\s+|pattern\s+)?(?:forms\s+|formed\s+|appears\s+)?(?=\()", r"\1 and ", t)
     return t
 
 
@@ -396,12 +441,25 @@ def _clause(c: str, notes: list[str], ctx: dict) -> dict:
     if not c:
         raise Unparsed("empty condition")
     m = re.fullmatch(r"(?:(?:there is|there's|we see|we get|you see|on|with|the|last|previous|today'?s?|daily|candle|candle is|"
-                     r"forms?|formed|is|a|an)\s+)*pat_([a-z_]+)(?:\s+(?:candle|candlestick|pattern|forms?|formed|appears|is formed|"
+                     r"forms?|formed|is|a|an)\s+)*(patc?)_([a-z0-9_]+)(?:\s+(?:candle|candlestick|pattern|forms?|formed|appears|is formed|"
                      r"prints?|printed|occurs|shows up|on the chart|today))*", c)
     if m:
-        if m.group(1) in ("doji", "spinning_top", "inside_bar", "outside_bar"):
-            notes.append(f"'{m.group(1).replace('_', ' ')}' is an indecision candle: consider pairing it with a trend condition")
-        return {"op": "pattern", "name": m.group(1)}
+        name = m.group(2)
+        if name in ("doji", "spinning_top", "inside_bar", "outside_bar", "long_legged_doji", "nr7"):
+            notes.append(f"'{name.replace('_', ' ')}' is an indecision candle: consider pairing it with a trend condition")
+        if m.group(1) == "patc":
+            if name.startswith("any_") or name in ("doji", "spinning_top", "inside_bar", "outside_bar", "long_legged_doji", "nr7"):
+                raise Clarify("Confirmation works with one bullish or bearish pattern (e.g. 'confirmed hammer').")
+            return {"op": "pattern", "name": name, "confirm": True}
+        return {"op": "pattern", "name": name}
+    m = re.fullmatch(r"(?:a |the )*zone_confluence(?: setup| strategy| signal)?(?: (?:with )?(?:a )?(?:score|scoring)"
+                     r"(?: of)? (?:above|over|at least|>=?) ?(\d+))?", c)
+    if m:
+        params = {"min_score": int(m.group(1))} if m.group(1) else {}
+        if not m.group(1):
+            notes.append("zone confluence setup: trades from a score of 60/100, its own stop (beyond the zone) and target (next resistance)")
+        ctx["strategy"] = True
+        return {"op": "strategy", "name": "zone_retest", "params": params}
     if re.search(r"\b(equals?|==|=)\b|(?<![<>])=(?!=)", c):
         raise Clarify("Exact equality on prices/indicators almost never triggers. Use above/below or a crossover.")
     m = re.fullmatch(r"macd(?:_(\d+)_(\d+)_(\d+))?(?: line)? (?:(bullish|bearish) (?:crossover|cross)|crossover|crosses (above|below) (?:the )?signal(?: line)?)", c)
@@ -546,8 +604,13 @@ def parse_deterministic(text: str) -> ParseOutput:
             raise Clarify("What is the entry condition?")
         rule = {"entry": _parse_bool(t, notes), "exit": _parse_bool(re.sub(r"\s*,\s*", " and ", exit_part), notes) if exit_part else None,
                 "side": "BUY", "stop_loss": stop, "target": target}
+        from syena.algos.rules import strategy_node
+
+        if strategy_node(rule["entry"]):  # a built-in strategy brings its own stop and target unless you set them
+            rule["stop_loss"] = rule["stop_loss"] or {"type": "strategy"}
+            rule["target"] = rule["target"] or {"type": "strategy"}
         rule = canon_rule(rule)
-        if not stop or not target:
+        if not rule["stop_loss"] or not rule["target"]:
             notes.append("stop-loss/target not given: ATR-based defaults for the chosen style will be used")
         return ParseOutput("ok", rule=rule, readable=describe_rule(rule), notes=list(dict.fromkeys(notes)))
     except Clarify as c:

@@ -188,7 +188,7 @@ def validate_out_of_sample(db: Session, lesson: Lesson) -> dict:
     cfg = settings_store.get(db, "lessons")
     threshold = settings_store.get(db, "trade_gate")["confidence_threshold"]
     evidence_ids = set(db.scalars(select(LessonEvidence.trade_id).where(LessonEvidence.lesson_id == lesson.id)))
-    pool = [t for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.CLOSED))
+    pool = [t for t in db.scalars(select(Trade).where(Trade.status == TradeStatus.CLOSED, Trade.instrument == "EQ"))
             if t.id not in evidence_ids and not is_holdout(t) and matches(lesson.trigger, t.setup or {})]
     effects = [simulate_effect(lesson, t, threshold) for t in pool]
     n = len(effects)

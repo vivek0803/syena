@@ -60,7 +60,7 @@ def lessons_context(lessons: list[Lesson]) -> str:
 def similar_trades(db: Session, features: dict, k: int = 5, as_of=None) -> list[dict]:
     q = embed(describe_setup(features))
     cands = []
-    stmt = select(Trade).where(Trade.status == TradeStatus.CLOSED)
+    stmt = select(Trade).where(Trade.status == TradeStatus.CLOSED, Trade.instrument == "EQ")
     if as_of is not None:  # replay: only trades already closed at that time
         stmt = stmt.where(Trade.closed_at <= as_of)
     for t in db.scalars(stmt.order_by(Trade.id.desc()).limit(500)):

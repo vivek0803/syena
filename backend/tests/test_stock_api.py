@@ -35,4 +35,4 @@ def test_chart_intervals_like_tradingview(authed, loaded, monkeypatch):  # noqa:
     assert {o["key"]: o["ok"] for o in c["intervals"]}["minute"] is True
     r = authed.get("/api/stock/GOODCO/chart", params={"range": "1Y", "interval": "minute"})
     assert r.status_code == 400 and "1m candles go back at most 1M" in r.json()["detail"]
-    assert authed.get("/api/stock/GOODCO/chart", params={"range": "1M", "interval": "2minute"}).status_code == 400
+    assert authed.get("/api/stock/GOODCO/chart", params={"range": "1M", "interval": "7minute"}).status_code == 400

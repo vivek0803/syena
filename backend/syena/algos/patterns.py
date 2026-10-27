@@ -36,7 +36,30 @@ PATTERNS: dict[str, tuple[str, str, bool]] = {
     "tweezer_top": ("Tweezer top", "bearish", True),
     "gravestone_doji": ("Gravestone doji", "bearish", False),
     "bearish_marubozu": ("Bearish marubozu", "bearish", False),
+    "three_inside_up": ("Three inside up", "bullish", True),
+    "three_outside_up": ("Three outside up", "bullish", True),
+    "morning_doji_star": ("Morning doji star", "bullish", True),
+    "abandoned_baby_bull": ("Bullish abandoned baby", "bullish", True),
+    "bullish_kicker": ("Bullish kicker", "bullish", True),
+    "bullish_belt_hold": ("Bullish belt hold", "bullish", False),
+    "bullish_counterattack": ("Bullish counterattack", "bullish", False),
+    "homing_pigeon": ("Homing pigeon", "bullish", False),
+    "rising_three_methods": ("Rising three methods", "bullish", True),
+    "upside_tasuki_gap": ("Upside tasuki gap", "bullish", False),
+    "inside_bar_breakout_up": ("Inside bar breakout (up)", "bullish", False),
+    "three_inside_down": ("Three inside down", "bearish", True),
+    "three_outside_down": ("Three outside down", "bearish", True),
+    "evening_doji_star": ("Evening doji star", "bearish", True),
+    "abandoned_baby_bear": ("Bearish abandoned baby", "bearish", True),
+    "bearish_kicker": ("Bearish kicker", "bearish", True),
+    "bearish_belt_hold": ("Bearish belt hold", "bearish", False),
+    "bearish_counterattack": ("Bearish counterattack", "bearish", False),
+    "falling_three_methods": ("Falling three methods", "bearish", True),
+    "downside_tasuki_gap": ("Downside tasuki gap", "bearish", False),
+    "inside_bar_breakout_down": ("Inside bar breakdown", "bearish", False),
     "doji": ("Doji", "neutral", False),
+    "long_legged_doji": ("Long-legged doji", "neutral", False),
+    "nr7": ("Narrowest range of 7 (NR7)", "neutral", False),
     "spinning_top": ("Spinning top", "neutral", False),
     "inside_bar": ("Inside bar", "neutral", False),
     "outside_bar": ("Outside bar", "neutral", False),
@@ -44,11 +67,21 @@ PATTERNS: dict[str, tuple[str, str, bool]] = {
     "gap_down": ("Gap down", "bearish", False),
     "any_bullish": ("Any bullish reversal pattern", "bullish", False),
     "any_bearish": ("Any bearish reversal pattern", "bearish", False),
+    "any_bullish_continuation": ("Any bullish continuation pattern", "bullish", False),
+    "any_bearish_continuation": ("Any bearish continuation pattern", "bearish", False),
 }
 BULLISH_REVERSALS = ["hammer", "inverted_hammer", "bullish_engulfing", "piercing_line", "morning_star",
-                     "three_white_soldiers", "bullish_harami", "tweezer_bottom", "dragonfly_doji"]
+                     "three_white_soldiers", "bullish_harami", "tweezer_bottom", "dragonfly_doji", "three_inside_up",
+                     "three_outside_up", "morning_doji_star", "abandoned_baby_bull", "bullish_kicker", "bullish_belt_hold",
+                     "bullish_counterattack", "homing_pigeon"]
 BEARISH_REVERSALS = ["shooting_star", "hanging_man", "bearish_engulfing", "dark_cloud_cover", "evening_star",
-                     "three_black_crows", "bearish_harami", "tweezer_top", "gravestone_doji"]
+                     "three_black_crows", "bearish_harami", "tweezer_top", "gravestone_doji", "three_inside_down",
+                     "three_outside_down", "evening_doji_star", "abandoned_baby_bear", "bearish_kicker", "bearish_belt_hold",
+                     "bearish_counterattack"]
+BULLISH_CONTINUATIONS = ["rising_three_methods", "upside_tasuki_gap", "inside_bar_breakout_up"]
+BEARISH_CONTINUATIONS = ["falling_three_methods", "downside_tasuki_gap", "inside_bar_breakout_down"]
+GROUPS = {"any_bullish": BULLISH_REVERSALS, "any_bearish": BEARISH_REVERSALS,
+          "any_bullish_continuation": BULLISH_CONTINUATIONS, "any_bearish_continuation": BEARISH_CONTINUATIONS}
 
 
 def _parts(df: pd.DataFrame):
@@ -77,10 +110,8 @@ def _session_open(df: pd.DataFrame) -> pd.Series:
 def detect(df: pd.DataFrame, name: str) -> pd.Series:
     if name not in PATTERNS:
         raise ValueError(f"unknown candlestick pattern {name!r}")
-    if name == "any_bullish":
-        return _any(df, BULLISH_REVERSALS)
-    if name == "any_bearish":
-        return _any(df, BEARISH_REVERSALS)
+    if name in GROUPS:
+        return _any(df, GROUPS[name])
     o, h, l, c, rng, body, upper, lower, avg = _parts(df)
     avg_rng = rng.rolling(14, min_periods=5).mean().shift(1)
     normal = rng >= avg_rng * 0.8  # ignore tiny candles: their shape means little
@@ -125,6 +156,20 @@ def detect(df: pd.DataFrame, name: str) -> pd.Series:
         "outside_bar": (h > ph) & (l < pl),
         "gap_up": (l > ph) & _session_open(df),
         "gap_down": (h < pl) & _session_open(df),
+        "long_legged_doji": doji & (upper >= rng * 0.3) & (lower >= rng * 0.3) & normal,
+        "nr7": (h - l) <= (h - l).rolling(7, min_periods=7).min(),
+        # a strong candle that opens beyond the previous candle's open, in the opposite direction: sentiment flipped
+        "bullish_kicker": pred & (pbody >= avg * 0.8) & green & long_body & (o >= po) & (l > pc),
+        "bearish_kicker": pgreen & (pbody >= avg * 0.8) & red & long_body & (o <= po) & (h < pc),
+        "bullish_belt_hold": green & long_body & (lower <= rng * 0.03) & (upper <= rng * 0.25) & down & at_low,
+        "bearish_belt_hold": red & long_body & (upper <= rng * 0.03) & (lower <= rng * 0.25) & up & at_high,
+        # a long candle against the trend met by a long candle the other way that closes at the same price
+        "bullish_counterattack": pred & (pbody >= avg) & green & long_body & ((c - pc).abs() <= tol * 2) & (o < pl) & down,
+        "bearish_counterattack": pgreen & (pbody >= avg) & red & long_body & ((c - pc).abs() <= tol * 2) & (o > ph) & up,
+        "homing_pigeon": pred & (pbody >= avg) & red & (o < po) & (c > pc) & (body < pbody * 0.7) & down,
+        # mother bar, an inside bar, then a close beyond the mother bar
+        "inside_bar_breakout_up": (ph < h.shift(2)) & (pl > l.shift(2)) & (c > h.shift(2)),
+        "inside_bar_breakout_down": (ph < h.shift(2)) & (pl > l.shift(2)) & (c < l.shift(2)),
     }
     if name in out:
         return out[name].fillna(False).astype(bool)
@@ -144,9 +189,60 @@ def detect(df: pd.DataFrame, name: str) -> pd.Series:
         b = red & (body >= avg * 0.8) & (lower <= body * 0.5)
         r = b & b.shift(1, fill_value=False) & b.shift(2, fill_value=False) & (c < pc) & (pc < c2) & \
             (o < po) & (o > pc) & (po < o2) & (po > c2)
+    elif name in ("morning_doji_star", "evening_doji_star"):
+        prng = rng.shift(1)
+        star = pbody <= prng * 0.1
+        if name == "morning_doji_star":
+            r = (c2 < o2) & (b2 >= avg) & star & (np.maximum(po, pc) < c2) & green & (c > (o2 + c2) / 2) & (move.shift(1) <= -1.0)
+        else:
+            r = (c2 > o2) & (b2 >= avg) & star & (np.minimum(po, pc) > c2) & red & (c < (o2 + c2) / 2) & (move.shift(1) >= 1.0)
+    elif name in ("abandoned_baby_bull", "abandoned_baby_bear"):
+        h2, l2 = h.shift(2), l.shift(2)
+        star = pbody <= rng.shift(1) * 0.1
+        if name == "abandoned_baby_bull":
+            r = (c2 < o2) & (b2 >= avg) & star & (ph < l2) & green & (l > ph) & (move.shift(1) <= -1.0)
+        else:
+            r = (c2 > o2) & (b2 >= avg) & star & (pl > h2) & red & (h < pl) & (move.shift(1) >= 1.0)
+    elif name in ("three_inside_up", "three_inside_down"):
+        if name == "three_inside_up":  # a bullish harami, then a close above the first candle's open
+            r = (c2 < o2) & (b2 >= avg) & (pc > po) & (po > c2) & (pc < o2) & green & (c > o2) & (move.shift(2) <= -1.0)
+        else:
+            r = (c2 > o2) & (b2 >= avg) & (pc < po) & (po < c2) & (pc > o2) & red & (c < o2) & (move.shift(2) >= 1.0)
+    elif name in ("three_outside_up", "three_outside_down"):
+        if name == "three_outside_up":  # a bullish engulfing, then a higher close
+            r = (c2 < o2) & (pc > po) & (pc >= o2) & (po <= c2) & (pbody > b2) & green & (c > pc) & (move.shift(1) <= -1.0)
+        else:
+            r = (c2 > o2) & (pc < po) & (pc <= o2) & (po >= c2) & (pbody > b2) & red & (c < pc) & (move.shift(1) >= 1.0)
+    elif name in ("upside_tasuki_gap", "downside_tasuki_gap"):
+        h2, l2 = h.shift(2), l.shift(2)
+        if name == "upside_tasuki_gap":  # two up candles with a gap, a down candle that does not close the gap
+            r = (c2 > o2) & pgreen & (pl > h2) & red & (o < pc) & (o > po) & (c < po) & (c > h2)
+        else:
+            r = (c2 < o2) & pred & (ph < l2) & green & (o > pc) & (o < po) & (c > po) & (c < l2)
+    elif name in ("rising_three_methods", "falling_three_methods"):
+        o4, c4, h4, l4, b4 = o.shift(4), c.shift(4), h.shift(4), l.shift(4), body.shift(4)
+        inside = pd.Series(True, index=df.index)
+        for k in (1, 2, 3):
+            inside &= (h.shift(k) <= h4) & (l.shift(k) >= l4) & (body.shift(k) <= b4 * 0.6)
+        if name == "rising_three_methods":
+            r = (c4 > o4) & (b4 >= avg) & inside & (c.shift(1) <= c.shift(3)) & green & long_body & (c > c4)
+        else:
+            r = (c4 < o4) & (b4 >= avg) & inside & (c.shift(1) >= c.shift(3)) & red & long_body & (c < c4)
     else:
         raise ValueError(name)
     return r.fillna(False).astype(bool)
+
+
+def confirmed(df: pd.DataFrame, name: str) -> pd.Series:
+    """The pattern formed on the PREVIOUS candle and this candle confirmed it: closed above the pattern candle's high
+    (bullish) or below its low (bearish). Traders wait for this before acting on a single-candle signal."""
+    raw = detect(df, name).shift(1, fill_value=False).astype(bool)
+    direction = PATTERNS[name][1]
+    if direction == "bearish":
+        ok = df["close"] < df["low"].shift(1)
+    else:
+        ok = df["close"] > df["high"].shift(1)
+    return (raw & ok.fillna(False)).astype(bool)
 
 
 def _any(df: pd.DataFrame, names: list[str]) -> pd.Series:
@@ -161,7 +257,7 @@ def found(df: pd.DataFrame, last: int | None = None, chart_only: bool = False) -
     view = df if last is None else df.iloc[-(last + 3 + TREND + 10):]  # enough history for the trend checks
     hits = []
     for name, (label, direction, chart) in PATTERNS.items():
-        if name.startswith("any_") or (chart_only and not chart):
+        if name in GROUPS or (chart_only and not chart):
             continue
         s = detect(view, name)
         if last is not None:
@@ -254,3 +350,69 @@ def summary(df: pd.DataFrame, since=None, latest: int = 6) -> dict:
         "latest": [{"pattern": h["label"], "direction": h["direction"], "at": h["ts"].isoformat()} for h in recent],
         "trendline": where,
     }
+
+
+# What each pattern means, for the pattern picker in Algo builder (phrase = what to type in a rule)
+HELP: dict[str, str] = {
+    "hammer": "small body at the top, long lower wick, after a fall: sellers pushed down and buyers took it back",
+    "inverted_hammer": "small body at the bottom, long upper wick, after a fall: first sign buyers are testing higher",
+    "bullish_engulfing": "a green body that swallows the previous red body after a fall",
+    "piercing_line": "after a red candle, a green one opens lower and closes above the red candle's midpoint",
+    "morning_star": "long red, small 'star', then a green candle closing into the red body: three-candle bottom",
+    "morning_doji_star": "a morning star whose middle candle is a doji: stronger indecision before the turn",
+    "three_white_soldiers": "three strong green candles, each opening inside the last and closing higher",
+    "three_inside_up": "a bullish harami followed by a close above the first candle's open: confirmed harami",
+    "three_outside_up": "a bullish engulfing followed by another higher close: confirmed engulfing",
+    "bullish_harami": "a small green body inside the previous long red body after a fall",
+    "tweezer_bottom": "two candles with the same low, red then green, at the bottom of a fall",
+    "dragonfly_doji": "open, high and close at the top with a long lower wick, after a fall",
+    "abandoned_baby_bull": "red candle, a doji gapping below it, then a green candle gapping back up: rare, strong bottom",
+    "bullish_kicker": "after a red candle, a strong green candle opens above the red candle's open: sentiment flips",
+    "bullish_belt_hold": "a long green candle that opens at its low after a fall",
+    "bullish_counterattack": "a long red candle answered by a long green candle closing at the same price",
+    "homing_pigeon": "a small red body inside the previous red body after a fall: selling is drying up",
+    "bullish_marubozu": "a long green candle with almost no wicks: buyers in control all session",
+    "rising_three_methods": "a long green candle, three small pullback candles inside it, then a new high close: uptrend resumes",
+    "upside_tasuki_gap": "two green candles with a gap up, then a red candle that doesn't close the gap: uptrend continues",
+    "inside_bar_breakout_up": "a candle inside the previous one, then a close above that mother candle's high",
+    "shooting_star": "small body at the bottom, long upper wick, after a rise: buyers pushed up and lost it",
+    "hanging_man": "hammer shape at the top of a rise: warning of selling",
+    "bearish_engulfing": "a red body that swallows the previous green body after a rise",
+    "dark_cloud_cover": "after a green candle, a red one opens higher and closes below its midpoint",
+    "evening_star": "long green, small 'star', then a red candle closing into the green body: three-candle top",
+    "evening_doji_star": "an evening star whose middle candle is a doji",
+    "three_black_crows": "three strong red candles, each opening inside the last and closing lower",
+    "three_inside_down": "a bearish harami followed by a close below the first candle's open",
+    "three_outside_down": "a bearish engulfing followed by another lower close",
+    "bearish_harami": "a small red body inside the previous long green body after a rise",
+    "tweezer_top": "two candles with the same high, green then red, at the top of a rise",
+    "gravestone_doji": "open, low and close at the bottom with a long upper wick, after a rise",
+    "abandoned_baby_bear": "green candle, a doji gapping above it, then a red candle gapping back down",
+    "bearish_kicker": "after a green candle, a strong red candle opens below the green candle's open",
+    "bearish_belt_hold": "a long red candle that opens at its high after a rise",
+    "bearish_counterattack": "a long green candle answered by a long red candle closing at the same price",
+    "bearish_marubozu": "a long red candle with almost no wicks: sellers in control",
+    "falling_three_methods": "a long red candle, three small bounce candles inside it, then a new low close",
+    "downside_tasuki_gap": "two red candles with a gap down, then a green candle that doesn't close the gap",
+    "inside_bar_breakout_down": "a candle inside the previous one, then a close below the mother candle's low",
+    "doji": "open and close almost equal: indecision",
+    "long_legged_doji": "a doji with long wicks both ways: big indecision",
+    "spinning_top": "small body, wicks both sides: indecision",
+    "inside_bar": "the whole candle inside the previous one: a pause before a move",
+    "outside_bar": "the candle's range covers the previous one both ways",
+    "nr7": "the narrowest range of the last 7 candles: volatility squeeze before a move",
+    "gap_up": "the session opens above the previous high",
+    "gap_down": "the session opens below the previous low",
+    "any_bullish": "any of the bullish reversal patterns above",
+    "any_bearish": "any of the bearish reversal patterns above",
+    "any_bullish_continuation": "rising three methods, upside tasuki gap or an inside-bar breakout",
+    "any_bearish_continuation": "falling three methods, downside tasuki gap or an inside-bar breakdown",
+}
+
+
+def catalog() -> list[dict]:
+    kind = lambda n: ("continuation" if n in BULLISH_CONTINUATIONS + BEARISH_CONTINUATIONS or n == "bullish_marubozu"  # noqa: E731
+                      or n == "bearish_marubozu" else "group" if n in GROUPS else "reversal" if n in BULLISH_REVERSALS + BEARISH_REVERSALS
+                      else "gap" if n.startswith("gap") else "indecision")
+    return [{"name": n, "label": lbl, "direction": d, "kind": kind(n), "meaning": HELP.get(n, ""),
+             "phrase": lbl.lower().replace(" (up)", "").replace("(nr7)", "").strip()} for n, (lbl, d, _c) in PATTERNS.items()]

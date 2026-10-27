@@ -76,17 +76,27 @@ def ingest(db: Session, raw: list[sources.RawItem], now: datetime | None = None)
     now = now or utcnow()
     recent = list(db.scalars(select(NewsItem).where(NewsItem.fetched_at >= now - timedelta(hours=48))))
     new = []
+    hashes = {id(r): sources.content_hash(r.title, r.key) for r in raw}
+    seen: set[str] = set()
+    vals = list(set(hashes.values()))
+    for k in range(0, len(vals), 500):  # one query per 500 items instead of one per item (NSE lists ~2,000 a day)
+        seen |= set(db.scalars(select(NewsItem.content_hash).where(NewsItem.content_hash.in_(vals[k:k + 500]))))
     for r in sorted(raw, key=lambda x: x.published_at):
-        h = sources.content_hash(r.title, r.key)
-        if db.scalar(select(NewsItem.id).where(NewsItem.content_hash == h)):
+        h = hashes[id(r)]
+        if h in seen:
             continue
+        seen.add(h)
         published = min(r.published_at, now)  # a future timestamp (bad feed timezone) counts as "just now"
-        story = f"{r.title} {r.body[:200]}" if r.key and r.body else r.title
+        telegram = bool(r.key and r.key.startswith("tg:"))
+        story = f"{r.title} {r.body[:200]}" if telegram and r.body else r.title
         item = NewsItem(source=r.source[:64], url=r.url[:1024], title=r.title[:1000], body=r.body, published_at=published,
                         content_hash=h, image_urls=r.images or None, fetched_at=now)
-        # compared with STALE items too: a story first seen 20 minutes ago is old news even if another site posts it now
-        dup = next((x for x in recent if (sources.same_story(x.title, r.title) or
-                    (r.key and sources.same_story(f"{x.title} {(x.body or '')[:200]}", story)))), None)
+        # compared with STALE items too: a story first seen 20 minutes ago is old news even if another site posts it now.
+        # Exchange filings are never "the same story" as another filing: each has its own document (link), and one
+        # company files many different things in a day (results, an order, a board meeting...).
+        dup = None if is_filing(item) else next(
+            (x for x in recent if not is_filing(x) and (sources.same_story(x.title, r.title) or
+             (telegram and sources.same_story(f"{x.title} {(x.body or '')[:200]}", story)))), None)
         routine = False
         if dup:
             item.status, item.dup_of_id = "DUPLICATE", dup.dup_of_id or dup.id
@@ -161,7 +171,7 @@ def read_images(db: Session, item: NewsItem, http_get=None) -> int:
 
 
 def item_text(item: NewsItem) -> str:
-    limit = 5000 if sources.FILING_MARK in (item.body or "") else 1500  # filings: keep the figures from the PDF
+    limit = 5000 if sources.FILING_MARK in (item.body or "") else 3500 if sources.ARTICLE_MARK in (item.body or "") else 1500  # filings: keep the figures from the PDF
     return f"[{item.id}] {item.published_at.isoformat()} {item.source}: {item.title}\n{(item.body or '')[:limit]}"
 
 
@@ -169,6 +179,17 @@ def item_text(item: NewsItem) -> str:
 def triage(db: Session, item: NewsItem, extra_symbols: list[str], *, model: str | None = None, eval_run_id: int | None = None,
            persist: bool = True) -> dict:
     cands = mapping.candidates(db, f"{item.title} {item.body or ''}", extra_symbols)
+    if not cands and persist and not is_filing(item) and settings_store.get(db, "news").get("ai_company_lookup", True):
+        # no company name matched the stock list (brand names, abbreviations, renamed companies): ask the AI which
+        # listed companies the item is about, and keep only names that clearly match a listed stock
+        try:
+            ex = llm.call(db, "news_companies", "company_extract", tier="triage", max_tokens=300,
+                          variables={"item": untrusted(item_text(item), "news")})
+            cands = mapping.resolve(db, (ex.data or {}).get("companies") or [])
+        except (llm.BudgetExceeded, llm.LLMUnavailable):
+            raise
+        except Exception as e:
+            log.info("company lookup failed", extra={"news_id": item.id, "error": str(e)[:200]})
     if not cands:
         result = {"relevant": False, "symbols": [], "event_type": None, "reason": "no listed company mentioned"}
         ai_id = mdl = pv = None
@@ -634,7 +655,32 @@ def process_symbol(db: Session, symbol: str, items: list[NewsItem], md, event_ty
                                                  f"target {target} / stop {stop}: reward {rr:.2f}× the risk (min {min_rr:g}×)"))
     d = engine.enter(db, intent, broker_factory, now=now)
     pretrade.record(db, d.id, consult)
+    _option_trade(db, md, symbol, a, sig, intent, items, broker_factory, now)
     return sig
+
+
+def _option_trade(db: Session, md, symbol: str, a: dict, sig: Signal, intent, items, broker_factory, now: datetime) -> None:
+    """The same verdict traded with an option (paper): BUY -> buy a call, SELL -> buy a put. Only when the news checks
+    passed (the share trade's own sizing / reward:risk don't apply to the option, which has its own stop and target)."""
+    ocfg = settings_store.get(db, "options")
+    if not (ocfg.get("enabled", True) and ocfg.get("news_enabled", True)) or a["action"] not in ("BUY", "SELL"):
+        return
+    gate = [c for c in intent.extra_checks if c.name not in ("reward_risk", "price")]
+    if not all(c.passed for c in gate):
+        return
+    try:
+        from syena.market.options_trade import enter_option, has_options, news_options_algo
+
+        if not has_options(db, symbol):
+            return
+        algo = news_options_algo(db)
+        enter_option(db, md, symbol, a["action"], source="news", algo_id=algo.id, signal_id=sig.id, confidence=intent.confidence,
+                     reasoning={**intent.reasoning, "via": "option"}, inputs=intent.inputs, extra_checks=gate,
+                     idempotency_key=f"news-sig{sig.id}-opt", news_item_ids=[i.id for i in items], setup=intent.setup,
+                     now=now, broker_factory=broker_factory)
+    except Exception as e:  # the share trade has already been handled; an option problem must not break the news loop
+        db.rollback()
+        log.warning("news option trade failed", extra={"stock": symbol, "error": str(e)[:200]})
 
 
 def _shadow(db: Session, symbol, items, md, now, event_type) -> None:
@@ -652,13 +698,27 @@ def _shadow(db: Session, symbol, items, md, now, event_type) -> None:
         log.warning("shadow analysis failed", extra={"stock": symbol, "error": str(e)})
 
 
+def _same_event(db: Session, a: NewsAnalysis, etype: str | None, items: list[NewsItem]) -> bool:
+    """Is this earlier analysis the same news as `items` (another source's copy), not just the same stock?"""
+    earlier = db.get(NewsItem, a.news_item_id)
+    if earlier is not None and any(sources.same_story(earlier.title, it.title) for it in items):
+        return True
+    if not etype or not a.event_type or etype in ("other", "macro") or a.event_type in ("other", "macro"):
+        return False
+    if a.event_type != etype:
+        return False
+    # two different exchange filings of the same kind (e.g. two separate orders) are two pieces of news
+    both_filings = earlier is not None and is_filing(earlier) and all(is_filing(it) for it in items)
+    return not both_filings
+
+
 def is_filing(item: NewsItem) -> bool:
     u = (item.url or "").lower()
     return "nseindia.com" in u or "bseindia.com" in u or u.endswith(".pdf") or (item.source or "").startswith(("NSE", "BSE"))
 
 
 def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now: datetime | None = None,
-              fetch_telegram=None, http_get=None, filing_get=None) -> dict:
+              fetch_telegram=None, http_get=None, filing_get=None, article_get=None) -> dict:
     """One polling cycle: fetch, dedupe, drop stale (see fresh_until), read images, triage, analyse, gate."""
     now = now or utcnow()
     cfg = settings_store.get(db, "news")
@@ -733,8 +793,10 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
     window = now - timedelta(minutes=float(cfg.get("symbol_dedup_minutes") or 30))
     for sym, (items, etype) in by_symbol.items():
         # the same stock + same kind of event was already analysed recently (another source's version of the story)
+        # only the same kind of event counts: an order win an hour after the results is new news, not a repeat
         recent = [a for a in db.scalars(select(NewsAnalysis).where(NewsAnalysis.stage == "analysis", NewsAnalysis.created_at >= window))
-                  if sym in (a.symbols or []) and a.news_item_id not in {i.id for i in items}]
+                  if sym in (a.symbols or []) and a.news_item_id not in {i.id for i in items}
+                  and _same_event(db, a, etype, items)]
         if recent:
             for it in items:
                 it.status, it.dup_of_id = "DUPLICATE", recent[-1].news_item_id
@@ -758,6 +820,15 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
                         stats["filings_read"] = stats.get("filings_read", 0) + 1
                 except Exception as e:
                     log.info("filing pdf not read", extra={"news_id": it.id, "error": str(e)[:200]})
+            elif (cfg.get("fetch_articles", True) and not is_filing(it) and sources.ARTICLE_MARK not in (it.body or "")
+                  and len(it.body or "") < 700 and (it.url or "").startswith("http") and "news.google." not in it.url):
+                try:  # the feed gave a headline and a line: read the article so the AI sees the details
+                    txt = (article_get or sources.article_text)(it.url)
+                    if txt:
+                        it.body = f"{(it.body or '').strip()}\n\n{sources.ARTICLE_MARK}\n{txt}".strip()
+                        stats["articles_read"] = stats.get("articles_read", 0) + 1
+                except Exception as e:
+                    log.info("article not read", extra={"news_id": it.id, "error": str(e)[:200]})
         db.commit()
         try:
             process_symbol(db, sym, items, md, etype, broker_factory, now=now, macro_note=macro_notes.get(sym))

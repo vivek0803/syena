@@ -7,7 +7,7 @@ import { useAct, useApi } from "../lib/hooks";
 const pct = (v: any, d = 2) => (v == null ? "–" : `${v > 0 ? "+" : ""}${Number(v).toFixed(d)}%`);
 const tone = (v: any) => (v == null ? "text-mute" : v > 0 ? "text-gain" : "text-loss");
 
-/** Backtest of the zone retest strategy (Umar Punjabi's method) and its variations across an index. */
+/** Backtest of Syena's zone confluence strategy and its variations across an index. */
 export default function ZoneStrategyLab({ universe, years, toast }: { universe: string; years: number; toast: { show: (m: string, t?: any) => void } }) {
   const lab = useApi<any>("/api/pattern-lab/strategy", { refetchInterval: (q: any) => (q.state.data?.job?.status === "running" ? 2000 : false) } as any);
   const run = useAct(() => api("/api/pattern-lab/strategy/run", { body: { universe, years } }), ["/api/pattern-lab/strategy"]);
@@ -15,16 +15,17 @@ export default function ZoneStrategyLab({ universe, years, toast }: { universe: 
   const d = lab.data, res = d?.latest, job = d?.job, prog = d?.progress;
   const running = job?.status === "running";
   return (
-    <Panel title="Zone retest strategy · Umar Punjabi method" pad={false}
+    <Panel title="Zone confluence strategy" pad={false}
       aside={res ? <span className="text-[13px] text-mute">{res.stocks} stocks · {res.period.from} to {res.period.to} · run {when(res.at)}</span> : undefined}>
       <div className="space-y-2 px-4 pt-3 text-[13px] text-parch-dim">
-        <ol className="list-decimal space-y-0.5 pl-5">
-          <li><b className="text-parch">Bias first:</b> trade only when structure is bullish (close above the last swing high) on this and the weekly chart.</li>
-          <li><b className="text-parch">Strong zones only:</b> where a move of 2×ATR+ that broke structure started, or a resistance broken aggressively.</li>
-          <li><b className="text-parch">Liquidity:</b> a zone visited twice already is skipped unless the retest sweeps the lows first.</li>
-          <li><b className="text-parch">Confirmation:</b> price back in the zone and a bullish candle closes there. No confirmation, no trade.</li>
-          <li><b className="text-parch">Risk:</b> stop beyond the zone, target the next strong resistance, at least 1:2. Clear area ahead = hold for the bigger move.</li>
-        </ol>
+        <p>Syena's own swing setup on its support/resistance engine. When price comes back into a support area and a bullish candle closes there, the setup is scored out of 100:</p>
+        <div className="grid gap-1.5 sm:grid-cols-3">
+          {[["Trend", "25", "bullish structure, above the 50-day average, weekly agrees"], ["Zone quality", "25", "touches, bounces, role reversal, where a big move began"],
+            ["Confirmation", "20", "reversal pattern 20, strong close 12 (none = no trade)"], ["Volume", "10", "confirmation on above-average volume"],
+            ["Liquidity", "10", "dipped below the lows, closed back above"], ["Extras", "10", "Fibonacci pullback 5, RSI with room to run 5"]].map(([k, w, d]) => (
+            <div key={k} className="rounded-lg bg-dusk px-3 py-2"><div className="flex items-baseline justify-between"><b className="text-parch">{k}</b><span className="num text-saffron">{w}</span></div><div className="text-[12px] text-mute">{d}</div></div>))}
+        </div>
+        <p>Bearish structure means no new buys. Stop just beyond the zone, target the next strong resistance, at least 1:2.</p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <button className="btn-primary" disabled={running || run.isPending}
             onClick={() => run.mutate(undefined, { onError: (er) => toast.show(er.message, "loss") })}>{running ? "Testing…" : res ? "Test again" : "Test the strategy"}</button>

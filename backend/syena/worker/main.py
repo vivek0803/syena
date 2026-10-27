@@ -308,6 +308,62 @@ def fundamentals(db):
     return sdata.refresh_fundamentals(db)
 
 
+@job("shareholding")
+def shareholding_job(db):
+    """New quarterly shareholding patterns (promoter / FII / DII) filed with NSE today."""
+    from syena.screener import shareholding
+
+    return shareholding.poll_rss(db)
+
+
+@job("shareholding_backfill")
+def shareholding_backfill(db):
+    """Stocks with no recent shareholding pattern: a few dozen a night from NSE's filing list."""
+    from syena.screener import shareholding
+
+    return shareholding.backfill(db, limit=int(settings_store.get(db, "screener").get("shareholding_per_night") or 60))
+
+
+@job("top_news")
+def top_news_job(db):
+    """6 PM: the day's 10 most important news items, ranked by the AI, for the Top news page."""
+    from syena.news import topnews
+
+    md = _md(db) if md_source.ready(db) else None
+    out = topnews.build(db, md=md)
+    return {"items": len(out.get("top", [])), "day": out.get("day")}
+
+
+@job("option_contracts")
+def option_contracts_job(db):
+    """Morning: today's list of option contracts from the broker (needed before news or algos trade options)."""
+    from syena.market import options
+
+    if not md_source.ready(db):
+        return {"skipped": "no price source"}
+    return {"contracts": options.sync_contracts(db, _md(db))}
+
+
+@job("option_oi")
+def option_oi_job(db):
+    """Near the close: record open interest for the main index option chains, so tomorrow's chain shows the change."""
+    from syena.market import options
+
+    if not md_source.ready(db):
+        return {"skipped": "no price source"}
+    md = _md(db)
+    options.ensure_contracts(db, md)
+    done = 0
+    for u in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
+        for e in options.expiries(db, u)[:2]:
+            try:
+                options.chain(db, md, u, e, strikes=20)
+                done += 1
+            except Exception as ex:
+                log.info("option oi snapshot failed", extra={"underlying": u, "error": str(ex)[:150]})
+    return {"chains": done}
+
+
 @job("pending_orders")
 def pending_orders(db):
     from syena.execution.pending import process_pending
@@ -345,6 +401,11 @@ def build_scheduler() -> BlockingScheduler:
     s.add_job(stock_daily, "cron", hour=16, minute=5, day_of_week="mon-fri", id="stock_daily")
     s.add_job(missed_moves, "cron", hour=17, minute=0, day_of_week="mon-fri", id="missed_moves")
     s.add_job(fundamentals, "cron", hour=20, minute=0, id="fundamentals")
+    s.add_job(shareholding_job, "cron", minute="*/30", hour="8-23", id="shareholding")
+    s.add_job(shareholding_backfill, "cron", hour=21, minute=30, id="shareholding_backfill")
+    s.add_job(top_news_job, "cron", hour=18, minute=0, id="top_news")
+    s.add_job(option_oi_job, "cron", hour=15, minute=25, day_of_week="mon-fri", id="option_oi")
+    s.add_job(option_contracts_job, "cron", hour=8, minute=45, day_of_week="mon-fri", id="option_contracts")
     s.add_job(pending_orders, "cron", minute="*", second=40, id="pending_orders")
     s.add_job(instruments, "cron", hour=8, minute=30, day_of_week="mon-fri", id="instruments")
     if get_settings().telegram_delivery == "polling":

@@ -17,14 +17,18 @@ METRICS = {
     "ret_1m": (True, "1-month return"), "ret_3m": (True, "3-month return"), "ret_6m": (True, "6-month return"),
     "vs_dma50": (True, "% vs 50-day avg"), "vs_dma200": (True, "% vs 200-day avg"), "rsi_fit": (True, "RSI near 60"),
     "volatility": (False, "volatility"), "max_drawdown": (True, "max fall from peak"), "market_cap": (True, "size/liquidity"),
+    "roe_3y": (True, "3-year ROE"), "roce_3y": (True, "3-year ROCE"), "sales_cagr_3y": (True, "3-year sales growth"),
+    "profit_cagr_3y": (True, "3-year profit growth"), "fcf_yield": (True, "free-cash-flow yield"),
+    "fii_change": (True, "FII buying"), "dii_change": (True, "DII buying"), "promoter_change": (True, "promoter buying"),
 }
 
 RUBRICS = {
     "LONG_TERM": {
-        "quality": (35, ["roe", "roa", "opm", "npm"]),
-        "growth": (30, ["sales_growth", "profit_growth"]),
-        "valuation": (25, ["pe", "pb", "ev_ebitda", "earnings_yield"]),
+        "quality": (30, ["roe", "roa", "opm", "npm", "roe_3y", "roce_3y"]),
+        "growth": (30, ["sales_growth", "profit_growth", "sales_cagr_3y", "profit_cagr_3y"]),
+        "valuation": (25, ["pe", "pb", "ev_ebitda", "earnings_yield", "fcf_yield"]),
         "balance_sheet": (10, ["debt_to_equity", "current_ratio"]),
+        "ownership": (5, ["fii_change", "dii_change", "promoter_change"]),
     },
     "SWING": {
         "momentum": (60, ["ret_1m", "ret_3m", "ret_6m", "vs_dma50", "vs_dma200", "rsi_fit"]),

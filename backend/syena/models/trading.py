@@ -55,7 +55,8 @@ class Algo(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
-    kind: Mapped[str] = mapped_column(String(8), default="rule")  # rule | news (news strategy is an algo too)
+    kind: Mapped[str] = mapped_column(String(8), default="rule")  # rule | news | news_opt (strategies are algos too)
+    instrument: Mapped[str] = mapped_column(String(8), default="EQ", server_default="EQ")  # EQ (shares) | OPT (buy options, paper)
     english_text: Mapped[str] = mapped_column(Text)
     parsed_rule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     parser_source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # deterministic | llm
@@ -133,7 +134,9 @@ class Trade(Base):
     mode: Mapped[str] = mapped_column(String(8))  # PAPER | LIVE (fixed at entry)
     style: Mapped[Style] = mapped_column(_enum(Style))
     algo_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
-    stock: Mapped[str] = mapped_column(String(32), index=True)
+    stock: Mapped[str] = mapped_column(String(32), index=True)  # NSE symbol, or the option's trading symbol
+    instrument: Mapped[str] = mapped_column(String(4), default="EQ", server_default="EQ")  # EQ | OPT
+    option: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {underlying, expiry, strike, type, lot_size, lots}
     side: Mapped[str] = mapped_column(String(4), default="BUY")
     qty: Mapped[int] = mapped_column(Integer)
     invested_amount: Mapped[float] = mapped_column(Float)
@@ -304,3 +307,32 @@ class WorkerHeartbeat(Base):
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
     ts: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class OptionContract(Base):
+    """One listed NSE option (index or stock) from the broker's instrument list, refreshed every morning."""
+    __tablename__ = "option_contracts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    broker: Mapped[str] = mapped_column(String(8))           # angel | kite (whose token this is)
+    token: Mapped[str] = mapped_column(String(32))
+    tradingsymbol: Mapped[str] = mapped_column(String(64))
+    underlying: Mapped[str] = mapped_column(String(32), index=True)
+    expiry: Mapped[date] = mapped_column(Date, index=True)
+    strike: Mapped[float] = mapped_column(Float)
+    option_type: Mapped[str] = mapped_column(String(2))      # CE | PE
+    lot_size: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String(8))             # index | stock
+
+
+class OptionOI(Base):
+    """The last open interest seen for a contract each day, so the chain can show today's change in OI."""
+    __tablename__ = "option_oi"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(32), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    oi: Mapped[float] = mapped_column(Float)
+    ltp: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (UniqueConstraint("token", "day", name="uq_option_oi_token_day"),)

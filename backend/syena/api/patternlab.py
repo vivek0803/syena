@@ -71,7 +71,7 @@ def make_algo(body: AlgoIn, db: Session = Depends(get_db)):
     return {"algo_id": algo.id, "name": algo.name, "readable": readable, "symbols": len(syms)}
 
 
-# ---------------------------------------------------------------- zone retest strategy (Umar Punjabi method)
+# ---------------------------------------------------------------- zone confluence strategy
 _sjob: dict = {"status": None}
 
 
