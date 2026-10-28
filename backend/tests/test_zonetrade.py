@@ -75,7 +75,7 @@ def test_rule_backtest_uses_the_strategy_stop_and_target():
     planned = {(round(float(r["stop"]), 2), round(float(r["target"]), 2)) for _, r in sig[sig["signal"]].iterrows()}
     assert res["trades"]
     for t in res["trades"]:
-        assert (t["stop"], t["target"]) in planned
+        assert (t["initial_stop"], t["target"]) in planned  # the stop may have trailed up since
 
 
 def test_strategy_stop_needs_a_strategy_entry():

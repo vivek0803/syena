@@ -25,7 +25,7 @@ log = logging.getLogger("syena.monitor")
 
 
 def _exit_or_alert(db: Session, t: Trade, reason: str, detail: str, price: float, broker_factory=None) -> str:
-    if t.snoozed_until and t.snoozed_until > utcnow() and reason not in ("stop_loss", "square_off"):
+    if t.snoozed_until and t.snoozed_until > utcnow() and reason not in ("stop_loss", "trailing_stop", "square_off"):
         return "snoozed"
     if t.auto_sell or reason == "square_off":
         d = engine.exit_trade(db, t, reason, price, actor="auto", broker_factory=broker_factory, detail={"detail": detail})
@@ -41,18 +41,28 @@ def _exit_or_alert(db: Session, t: Trade, reason: str, detail: str, price: float
 
 def check_price_levels(db: Session, prices: dict[str, float], now: datetime | None = None, broker_factory=None) -> list[str]:
     """Fast loop (every minute): stop-loss / target / square-off on live prices."""
+    from syena.execution import trailing
+
     now = now or utcnow()
     engine.mark_to_market(db, prices, now)
     styles = settings_store.get(db, "styles")
+    tcfg = trailing.config(db)
     out = []
     for t in list(db.scalars(select(Trade).where(Trade.status == TradeStatus.OPEN))):
         p = prices.get(t.stock)
         if not p:
             continue
+        before = t.stop_loss
+        if trailing.update(db, t, p, now, tcfg):
+            db.commit()
+            log.info("trailing stop raised", extra={"stock": t.stock, "trade_id": t.id, "from": before, "to": t.stop_loss})
         if t.style == Style.INTRADAY and not calendar.before(now, styles["intraday_square_off"]):
             out.append(_exit_or_alert(db, t, "square_off", f"intraday square-off at {styles['intraday_square_off']}", p, broker_factory))
         elif t.stop_loss and (p >= t.stop_loss if t.side == "SELL" else p <= t.stop_loss):  # shorts: stop is above
-            out.append(_exit_or_alert(db, t, "stop_loss", f"LTP {p} {'≥' if t.side == 'SELL' else '≤'} stop {t.stop_loss}", p, broker_factory))
+            trailed = bool(t.trail and t.trail.get("moved"))
+            out.append(_exit_or_alert(db, t, "trailing_stop" if trailed else "stop_loss",
+                                      f"LTP {p} {'≥' if t.side == 'SELL' else '≤'} {'trailing ' if trailed else ''}stop {t.stop_loss}"
+                                      + (f" (started at {t.trail.get('initial_stop')})" if trailed else ""), p, broker_factory))
         elif t.target and (p <= t.target if t.side == "SELL" else p >= t.target):
             out.append(_exit_or_alert(db, t, "target", f"LTP {p} {'≤' if t.side == 'SELL' else '≥'} target {t.target}", p, broker_factory))
     return out

@@ -107,3 +107,44 @@ def option_trades(db: Session = Depends(get_db)):
              "avg_win": round(sum(wins) / len(wins), 2) if wins else None, "avg_loss": round(sum(losses) / len(losses), 2) if losses else None,
              "profit_factor": round(sum(wins) / -sum(losses), 2) if losses and sum(losses) < 0 else None}
     return {"summary": total, "by_strategy": sorted(by.values(), key=lambda b: -b["trades"]), "trades": rows}
+
+
+# ---------------------------------------------------------------- NIFTY daily options strategy
+@router.get("/nifty")
+def nifty_strategy(db: Session = Depends(get_db)):
+    from syena.market import nifty_options as nf
+
+    st = nf.get_state(db)
+    days = st.get("days") or {}
+    return {"config": nf.config(db), "today": days.get(max(days)) if days else None, "history": [dict(v, day=k) for k, v in sorted(days.items(), reverse=True)][:20],
+            "algo_id": nf.strategy_algo(db).id, "backtest": st.get("backtest")}
+
+
+class NiftyBacktestIn(BaseModel):
+    days: int = Field(90, ge=20, le=180)
+
+
+@router.post("/nifty/backtest")
+def nifty_backtest(body: NiftyBacktestIn, md=Depends(market_data), db: Session = Depends(get_db)):
+    from datetime import timedelta
+
+    from syena.db import utcnow
+    from syena.market import nifty_options as nf
+    from syena.models import AppSetting, OptionContract
+    from sqlalchemy import select
+
+    now = utcnow()
+    try:
+        daily = md.candles(nf.UNDERLYING, "day", now - timedelta(days=body.days + 120), now)
+        five = md.candles(nf.UNDERLYING, "5minute", now - timedelta(days=body.days), now)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't load NIFTY candles: {str(e)[:200]}")
+    lot = db.scalar(select(OptionContract.lot_size).where(OptionContract.underlying == "NIFTY").limit(1)) or 75
+    res = nf.backtest(daily, five, nf.config(db), lot_size=int(lot))
+    res["at"], res["period_days"] = now.isoformat(), body.days
+    row = db.get(AppSetting, nf.STATE_KEY) or AppSetting(key=nf.STATE_KEY, value={})
+    row.value = {**(row.value or {}), "backtest": res}
+    row.updated_at = now
+    db.merge(row)
+    db.commit()
+    return res

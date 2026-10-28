@@ -31,6 +31,8 @@ class BacktestConfig:
     max_hold_days: int = 20
     entry_cutoff: str = "14:45"
     square_off: str = "15:10"
+    trail_activate_r: float | None = 1.0  # trailing stop (None = off): see execution/trailing.py
+    trail_distance_r: float = 1.0
 
 
 def risk_levels(rule: dict, entry: float, atr_value: float, cfg: BacktestConfig) -> tuple[float | None, float | None]:
@@ -96,13 +98,17 @@ def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "", cac
                 if (stop is not None and px <= stop) or (target is not None and px >= target):
                     skipped.append({"ts": t.isoformat(), "reason": "opened beyond the planned stop/target"})
                 else:
-                    pos = {"entry_ts": t, "entry": px, "qty": sz.qty, "stop": stop, "target": target, "entry_i": i}
+                    pos = {"entry_ts": t, "entry": px, "qty": sz.qty, "stop": stop, "target": target, "entry_i": i, "trail": None}
+                    if cfg.trail_activate_r is not None and stop is not None and px > stop:
+                        risk = px - stop
+                        pos["trail"] = {"kind": "r", "initial_stop": stop, "dist": cfg.trail_distance_r * risk, "best": px,
+                                        "activate_at": px + cfg.trail_activate_r * risk, "moved": 0}
                     cash -= px * sz.qty
         # 2) intrabar stop / target on an open position
         if pos:
             hit = None
             if pos["stop"] is not None and l[i] <= pos["stop"]:
-                hit = ("stop_loss", min(o[i], pos["stop"]) if i > pos["entry_i"] else pos["stop"])
+                hit = ("trailing_stop" if (pos.get("trail") or {}).get("moved") else "stop_loss", min(o[i], pos["stop"]) if i > pos["entry_i"] else pos["stop"])
             elif pos["target"] is not None and h[i] >= pos["target"]:
                 hit = ("target", max(o[i], pos["target"]) if i > pos["entry_i"] else pos["target"])
             if hit:
@@ -110,6 +116,11 @@ def run(df: pd.DataFrame, rule: dict, cfg: BacktestConfig, symbol: str = "", cac
                 pos = _close(pos, hit[1] * (1 - slip), t, trades, intraday)
                 cash += trades[-1]["proceeds"]
                 pending_exit = False
+        # 2b) after the candle has closed, ratchet the trailing stop on its high (used from the NEXT candle on)
+        if pos and pos.get("trail"):
+            from syena.execution.trailing import new_stop
+
+            pos["stop"], pos["trail"] = new_stop(pos["trail"], pos["entry"], pos["stop"], h[i], short=False)
         # 3) time-based exits
         if pos:
             last_bar_of_day = i + 1 == len(df) or times[i + 1].date() != t.date()
@@ -155,6 +166,8 @@ def _close(pos, px, t, trades, intraday):
         "exit": round(px, 2), "qty": pos["qty"], "charges": charges, "pnl": round(pnl, 2),
         "return_pct": round(pnl / (pos["entry"] * pos["qty"]) * 100, 3), "exit_reason": pos["exit_reason"],
         "stop": None if pos["stop"] is None else round(pos["stop"], 2),
+        "initial_stop": None if (pos.get("trail") or {}).get("initial_stop", pos["stop"]) is None
+        else round((pos.get("trail") or {}).get("initial_stop", pos["stop"]), 2),
         "target": None if pos["target"] is None else round(pos["target"], 2),
         "proceeds": px * pos["qty"] - charges,
     })

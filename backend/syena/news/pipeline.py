@@ -251,8 +251,11 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
     consult = pretrade.consult(db, setup, None, as_of=as_of)
     active = [l for l in pretrade.retrieve(db, setup, statuses=("ACTIVE",), as_of=as_of)]
     news_txt = untrusted("\n\n".join(item_text(i) for i in items if i.published_at <= as_of) + (f"\n\n{macro_note}" if macro_note else ""), "news")
+    # web search only on live analyses: a replay of past news must not read pages written after it (look-ahead)
+    live = eval_run_id is None and not shadow and abs((utcnow() - as_of).total_seconds()) < 3600
+    web = int(settings_store.get(db, "ai_web").get("news_analysis") or 0) if live else 0
     res = llm.call(db, "news_analysis", "news_analysis", tier=None if model else "analysis", model=model, max_tokens=900,
-                   shadow=shadow, eval_run_id=eval_run_id,
+                   shadow=shadow, eval_run_id=eval_run_id, web_search=web,
                    variables={"symbol": symbol, "news": news_txt, "technicals": technicals_brief(tech),
                               "company": _facts_or_note(db, symbol, daily),
                               "context": json.dumps(ctx), "lessons": pretrade.lessons_context(active),

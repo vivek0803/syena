@@ -96,9 +96,9 @@ def test_same_data_gives_same_answer_and_is_deterministic(loaded, fake_llm, monk
     temps = []
     real = llm.FakeBackend.complete
 
-    def spy(self, model, system, user, max_tokens, images=None, temperature=None):
+    def spy(self, model, system, user, max_tokens, images=None, temperature=None, web_search=0):
         temps.append(temperature)
-        return real(self, model, system, user, max_tokens, images)
+        return real(self, model, system, user, max_tokens, images, web_search=web_search)
     monkeypatch.setattr(llm.FakeBackend, "complete", spy)
     wl = Watchlist(name="w", symbols=["GOODCO", "DEBTCO"])
     loaded.add(wl)

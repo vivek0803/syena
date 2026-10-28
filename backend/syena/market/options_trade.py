@@ -28,11 +28,11 @@ def has_options(db: Session, underlying: str) -> bool:
 
 
 def pick_contract(db: Session, underlying: str, direction: str, spot: float, now: datetime,
-                  expiry: date | None = None, strike_pref: str | None = None) -> OptionContract | None:
+                  expiry: date | None = None, strike_pref: str | None = None, min_days: float | None = None) -> OptionContract | None:
     """direction BUY -> call, SELL -> put. strike_pref: ATM | ITM | OTM (one strike from the money)."""
     cfg = settings_store.get(db, "options")
     kind = "CE" if direction == "BUY" else "PE"
-    min_days = float(cfg.get("min_days_to_expiry") or 0)
+    min_days = float(cfg.get("min_days_to_expiry") or 0) if min_days is None else min_days
     exps = [e for e in op.expiries(db, underlying) if op.years_to_expiry(e, now) * 365 >= min_days]
     if expiry:
         exps = [e for e in exps if e == expiry] or [expiry]
@@ -74,7 +74,8 @@ def enter_option(db: Session, md, underlying: str, direction: str, *, source: st
                  inputs: dict | None = None, extra_checks: list[Check] | None = None, idempotency_key: str | None = None,
                  lots: int | None = None, expiry: date | None = None, strike: float | None = None, option_type: str | None = None,
                  stop_pct: float | None = None, target_pct: float | None = None, news_item_ids: list | None = None,
-                 setup: dict | None = None, now: datetime | None = None, broker_factory=None):
+                 setup: dict | None = None, now: datetime | None = None, broker_factory=None,
+                 style: Style = Style.SWING, min_days: float | None = None, strike_pref: str | None = None):
     """Pick the contract, price it and send it through the normal execution engine (checks, decision log, paper fill)."""
     now = now or utcnow()
     cfg = settings_store.get(db, "options")
@@ -89,8 +90,8 @@ def enter_option(db: Session, md, underlying: str, direction: str, *, source: st
                                                    OptionContract.strike == strike, OptionContract.option_type == option_type))
         direction = "BUY" if option_type == "CE" else "SELL"
     else:
-        c = pick_contract(db, underlying, direction, spot or 0, now, expiry) if spot else None
-    base = dict(style=Style.SWING, source=source, algo_id=algo_id, signal_id=signal_id, confidence=confidence,
+        c = pick_contract(db, underlying, direction, spot or 0, now, expiry, strike_pref, min_days) if spot else None
+    base = dict(style=style, source=source, algo_id=algo_id, signal_id=signal_id, confidence=confidence,
                 reasoning=reasoning or {}, inputs=inputs or {}, news_item_ids=news_item_ids or [], setup=setup or {})
     if c is None:
         return engine.record_verdict(db, engine.TradeIntent(symbol=underlying, ref_price=spot or 0.0, instrument="OPT", **base),

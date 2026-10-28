@@ -132,7 +132,7 @@ def login(db: Session, http=httpx) -> str:
         old.revoked = True
     midnight = datetime.combine(utcnow().astimezone(IST).date() + timedelta(days=1), time(0, 0), IST)
     db.add(BrokerToken(broker="angel", access_token_enc=encrypt(jwt), broker_user_id=s.angel_client_id,
-                       expires_at=midnight - timedelta(minutes=5)))
+                       expires_at=max(midnight - timedelta(minutes=5), min(midnight, utcnow() + timedelta(minutes=2)))))
     db.commit()
     log.info("angel one session started")
     return jwt
@@ -210,6 +210,10 @@ class AngelMarketData:
         return {s: mp[s] for s in symbols if s in mp}
 
     def token(self, symbol: str) -> str:
+        from syena.market.options import INDICES
+
+        if symbol in INDICES:  # index candles (NIFTY, BANKNIFTY...): Angel's index tokens on NSE
+            return INDICES[symbol][0]
         t = self._tokens([symbol]).get(symbol)
         if t is None:
             raise ValueError(f"'{symbol}' is not an NSE equity symbol. Use the trading symbol, e.g. RELIANCE, TCS, INFY.")

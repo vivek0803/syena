@@ -224,6 +224,9 @@ class KiteMarketData:
         return len(recs)
 
     def _token(self, symbol: str) -> int:
+        idx = {"NIFTY": 256265, "BANKNIFTY": 260105, "FINNIFTY": 257801, "MIDCPNIFTY": 288009}  # Kite index tokens
+        if symbol in idx:
+            return idx[symbol]
         try:
             return instrument_token(self.db, symbol)
         except KeyError:

@@ -344,6 +344,17 @@ def option_contracts_job(db):
     return {"contracts": options.sync_contracts(db, _md(db))}
 
 
+@job("nifty_options")
+def nifty_options_job(db):
+    """NIFTY daily options strategy: checks for the opening-range breakout every 5 minutes, 09:30-11:30."""
+    from syena.market import nifty_options
+
+    if not _market_open(db) or not md_source.ready(db):
+        return {"skipped": True}
+    md = _md(db)
+    return nifty_options.run(db, md, broker_factory=engine.default_broker_factory(md))
+
+
 @job("option_oi")
 def option_oi_job(db):
     """Near the close: record open interest for the main index option chains, so tomorrow's chain shows the change."""
@@ -405,6 +416,7 @@ def build_scheduler() -> BlockingScheduler:
     s.add_job(shareholding_backfill, "cron", hour=21, minute=30, id="shareholding_backfill")
     s.add_job(top_news_job, "cron", hour=18, minute=0, id="top_news")
     s.add_job(option_oi_job, "cron", hour=15, minute=25, day_of_week="mon-fri", id="option_oi")
+    s.add_job(nifty_options_job, "cron", hour="9-11", minute="*/5", second=30, day_of_week="mon-fri", id="nifty_options")
     s.add_job(option_contracts_job, "cron", hour=8, minute=45, day_of_week="mon-fri", id="option_contracts")
     s.add_job(pending_orders, "cron", minute="*", second=40, id="pending_orders")
     s.add_job(instruments, "cron", hour=8, minute=30, day_of_week="mon-fri", id="instruments")

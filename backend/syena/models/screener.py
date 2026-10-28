@@ -91,6 +91,7 @@ class StockDaily(Base):
     earnings_yield: Mapped[float | None] = mapped_column(Float, nullable=True)
     pct_from_52w_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     fcf_yield: Mapped[float | None] = mapped_column(Float, nullable=True)  # free cash flow / market cap, %
+    peg: Mapped[float | None] = mapped_column(Float, nullable=True)  # P/E ÷ EPS growth % a year (3-yr CAGR, else latest)
 
     __table_args__ = (UniqueConstraint("symbol", "day", name="uq_stock_day"), Index("ix_stock_daily_day", "day"))
 
@@ -156,3 +157,19 @@ class ShareholdingPattern(Base):
     fetched_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     __table_args__ = (UniqueConstraint("symbol", "as_of", name="uq_shp_symbol_date"),)
+
+
+class Financials(Base):
+    """One period of a company's reported numbers (₹ crore), like the tables on a screener.in company page.
+    kind: Q (quarterly results) | A (annual P&L) | BS (balance sheet, annual) | CF (cash flow, annual)."""
+    __tablename__ = "financials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(2))
+    period_end: Mapped[date] = mapped_column(Date)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("symbol", "kind", "period_end", name="uq_financials_period"),)

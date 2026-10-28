@@ -1,8 +1,7 @@
-import { createChart, CrosshairMode, IChartApi, ISeriesApi, LineStyle, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import AiVerdict from "../components/AiVerdict";
-import { ZoneBands } from "../components/zoneBands";
+import TvChart from "../components/TvChart";
 import { Empty, ErrorNote, Loading, Page, Panel, Pill, Tabs, decisionLabel, decisionTone } from "../components/ui";
 import { api } from "../lib/api";
 import { day, signed, tone, when } from "../lib/format";
@@ -14,12 +13,6 @@ const CANDLES: [string, string, string][] = [["minute", "1m", "1M"], ["2minute",
 const AUTO: Record<string, string> = { "1D": "5minute", "5D": "15minute", "1M": "60minute", "3M": "day", "6M": "day", "1Y": "day", "3Y": "day", "5Y": "day" };
 const fits = (iv: string, range: string) => RANGES.indexOf(range) <= RANGES.indexOf(CANDLES.find((c) => c[0] === iv)![2]);
 const IST = 19800; // chart axis in Indian time
-const C = { up: "#3FC48A", down: "#F2685A", grid: "#1F283B", text: "#858DA3", line: "#283350", bg: "#151D2E" };
-// Overlay lines: validated categorical slots (blue, yellow, violet) - distinct from the green/red candles.
-const LINES: Record<string, { label: string; color: string }> = {
-  sma20: { label: "20-day avg", color: "#3987e5" }, sma50: { label: "50-day avg", color: "#c98500" }, sma200: { label: "200-day avg", color: "#9085e9" },
-  ema20: { label: "EMA 20", color: "#3987e5" }, vwap: { label: "VWAP", color: "#c98500" }, ema50: { label: "EMA 50", color: "#c98500" },
-};
 const n = (v: any, d = 2) => (v === null || v === undefined ? "–" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d }));
 
 export default function Stock() {
@@ -68,7 +61,7 @@ function StockView({ symbol }: { symbol: string }) {
 
   return (
     <Page title={symbol} intro={m ? <span>{m.name ?? ""}{m.sector ? <span className="text-mute"> · {m.sector}</span> : null}</span> : undefined}
-      actions={<div className="flex gap-2"><Link to={`/ask?q=${encodeURIComponent(`What does the data say about ${symbol} right now?`)}`} className="btn-ghost">Ask Syena AI about {symbol}</Link><Link to="/stock" className="btn-ghost">Another stock</Link></div>}>
+      actions={<div className="flex flex-wrap gap-2"><Link to={`/company/${symbol}`} className="btn-ghost">Financials</Link><Link to={`/ask?q=${encodeURIComponent(`What does the data say about ${symbol} right now?`)}`} className="btn-ghost">Ask Syena AI about {symbol}</Link><Link to="/stock" className="btn-ghost">Another stock</Link></div>}>
       <ErrorNote error={info.error} />
       <div className="space-y-6">
         <Panel pad={false}>
@@ -95,7 +88,7 @@ function StockView({ symbol }: { symbol: string }) {
           <ErrorNote error={chart.error} />
           {chart.isLoading ? <div className="h-[460px]"><Loading what="Loading prices" /></div>
             : !chart.data?.candles?.length ? <div className="p-6"><Empty title="No price data">Angel One returned no candles for this range (market holiday, or a newly listed stock).</Empty></div>
-            : <PriceChart data={chart.data} trades={info.data?.trades ?? []} />}
+            : <TvChart data={chart.data} trades={info.data?.trades ?? []} symbol={symbol} />}
           {chart.data?.corporate_actions?.length > 0 && <p className="px-4 pb-3 text-[12px] text-mute">
             {chart.data.corporate_actions.map((a: any) => a.adjusted ? `${a.label} on ${a.date}: earlier prices adjusted so the chart is continuous`
               : `${a.label} on ${a.date}: not adjusted, check it`).join(" · ")}</p>}
@@ -305,144 +298,5 @@ function Ownership({ m, history }: { m: any; history: any[] }) {
         </details>)}
       <p className="mt-2 text-[12px] text-mute">From the quarterly shareholding pattern filed with NSE. Rising FII/DII holding means big institutions are buying.</p>
     </Panel>
-  );
-}
-
-function PriceChart({ data, trades }: { data: any; trades: any[] }) {
-  const box = useRef<HTMLDivElement>(null);
-  const rsiBox = useRef<HTMLDivElement>(null);
-  const [on, setOn] = useState<Record<string, boolean>>({ sma20: false, sma50: true, sma200: true, ema20: true, vwap: true, ema50: false, patterns: true, trendlines: false, zones: true, structure: true });
-  const [hover, setHover] = useState<any>(null);
-  const intraday = data.interval !== "day";
-  const shift = (t: number) => (t + (intraday ? IST : 0)) as UTCTimestamp;
-  const markers = useMemo<SeriesMarker<Time>[]>(() => {
-    if (!data.candles.length) return [];
-    const lo = data.candles[0].t, hi = data.candles.at(-1).t;
-    const snap = (iso: string) => {  // place a trade on the candle it happened in
-      const ts = Math.floor(new Date(iso).getTime() / 1000);
-      if (ts < lo - 86400 || ts > hi + 86400) return null;
-      let best = data.candles[0].t;
-      for (const c of data.candles) { if (c.t <= ts) best = c.t; else break; }
-      return best;
-    };
-    const out: SeriesMarker<Time>[] = [];
-    for (const t of trades) {
-      const short = t.side === "SELL";
-      const a = t.created_at && t.entry_price ? snap(t.created_at) : null;
-      if (a != null) out.push({ time: shift(a), position: short ? "aboveBar" : "belowBar", color: short ? C.down : C.up, shape: short ? "arrowDown" : "arrowUp", text: short ? "Short" : "Buy" });
-      const b = t.closed_at && t.exit_price_executed ? snap(t.closed_at) : null;
-      if (b != null) out.push({ time: shift(b), position: short ? "belowBar" : "aboveBar", color: "#EEE8DB", shape: "circle", text: short ? "Cover" : "Sell" });
-    }
-    if (on.structure) {
-      for (const sw of data.levels?.swings ?? []) {
-        if (sw.t < lo) continue;  // swings in the warm-up history before the visible range
-        const top = sw.label.endsWith("H");
-        out.push({ time: shift(sw.t), position: top ? "aboveBar" : "belowBar", color: "#B9B3A6", shape: top ? "arrowDown" : "arrowUp", size: 0, text: sw.label } as SeriesMarker<Time>);
-      }
-    }
-    if (on.patterns) {
-      const recent = data.candles.length > 20 ? data.candles[data.candles.length - 20].t : 0;
-      const seen = new Set<string>();
-      for (const p of data.patterns ?? []) {
-        const bull = p.direction === "bullish";
-        const named = p.t >= recent;  // names on the last 20 candles; older patterns are small dots
-        const key = `${p.t}-${bull}`;
-        if (!named && seen.has(key)) continue;
-        seen.add(key);
-        out.push({ time: shift(p.t), position: bull ? "belowBar" : "aboveBar", color: bull ? "#7FD1A8" : p.direction === "bearish" ? "#F0948A" : "#B9B3A6",
-          shape: "circle", size: named ? 0.6 : 0.3, text: named ? p.label : "" } as SeriesMarker<Time>);
-      }
-    }
-    return out.sort((x, y) => (x.time as number) - (y.time as number));
-  }, [data, trades, on.patterns, on.structure]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!box.current || !rsiBox.current) return;
-    const base = {
-      autoSize: true, layout: { background: { color: C.bg }, textColor: C.text, fontFamily: "Figtree Variable, system-ui, sans-serif" },
-      grid: { vertLines: { visible: false }, horzLines: { color: C.grid, style: LineStyle.Dotted } }, rightPriceScale: { borderColor: C.line },
-      timeScale: { borderColor: C.line, timeVisible: intraday, secondsVisible: false }, crosshair: { mode: CrosshairMode.Normal },
-      localization: { locale: "en-IN", priceFormatter: (p: number) => p.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
-    };
-    const ch: IChartApi = createChart(box.current, base);
-    const candles = ch.addCandlestickSeries({ upColor: C.up, downColor: C.down, wickUpColor: C.up, wickDownColor: C.down, borderVisible: false,
-      priceFormat: { type: "price", precision: 2, minMove: 0.05 } });
-    candles.setData(data.candles.map((c: any) => ({ time: shift(c.t), open: c.o, high: c.h, low: c.l, close: c.c })));
-    candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.24 } });
-    const vol = ch.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
-    ch.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-    vol.setData(data.candles.map((c: any) => ({ time: shift(c.t), value: c.v ?? 0, color: c.c >= c.o ? "rgba(86,180,136,.35)" : "rgba(227,107,93,.35)" })));
-    const lineSeries: Record<string, ISeriesApi<"Line">> = {};
-    for (const [k, pts] of Object.entries<any[]>(data.lines ?? {})) {
-      if (!on[k]) continue;
-      const s = ch.addLineSeries({ color: LINES[k]?.color ?? "#EEE8DB", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-      s.setData(pts.map((p) => ({ time: shift(p.t), value: p.v })));
-      lineSeries[k] = s;
-    }
-    if (on.trendlines) {
-      for (const tl of data.trendlines ?? []) {
-        const s = ch.addLineSeries({ color: tl.kind === "support" ? "#3FC48A" : "#F2685A", lineWidth: 1, lineStyle: LineStyle.Dashed,
-          lastValueVisible: true, priceLineVisible: false, crosshairMarkerVisible: false, title: tl.kind === "support" ? "support" : "resistance" });
-        const pts = tl.points.map((p: any) => ({ time: shift(p.t), value: p.v })).filter((p: any, i: number, a: any[]) => i === 0 || p.time > a[i - 1].time);
-        s.setData(pts);
-      }
-    }
-    if (on.zones && data.levels) {
-      const bands = [
-        ...(data.levels.resistances ?? []).map((z: any, i: number) => ({ low: z.low, high: z.high, color: C.down, label: `R${i + 1} · ${z.strength} · ${z.touches} touches` })),
-        ...(data.levels.supports ?? []).map((z: any, i: number) => ({ low: z.low, high: z.high, color: C.up, label: `S${i + 1} · ${z.strength} · ${z.touches} touches` })),
-      ];
-      candles.attachPrimitive(new ZoneBands(bands));
-      for (const b of bands) candles.createPriceLine({ price: (b.low + b.high) / 2, color: b.color, lineVisible: false, axisLabelVisible: true, title: b.label.split(" ")[0], lineWidth: 1, lineStyle: LineStyle.Solid });
-    }
-    candles.setMarkers(markers);
-    ch.timeScale().fitContent();
-
-    const rc: IChartApi = createChart(rsiBox.current, { ...base, layout: { ...base.layout, attributionLogo: false } as any,
-      timeScale: { ...base.timeScale, visible: false }, handleScroll: false, handleScale: false });
-    const rs = rc.addLineSeries({ color: "#B9B3A6", lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
-    rs.setData((data.rsi ?? []).map((p: any) => ({ time: shift(p.t), value: p.v })));
-    for (const lvl of [70, 30]) rs.createPriceLine({ price: lvl, color: lvl === 70 ? C.down : C.up, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: true, title: "" });
-    rc.priceScale("right").applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
-    const sync = (r: any) => { if (r) rc.timeScale().setVisibleLogicalRange(r); };
-    ch.timeScale().subscribeVisibleLogicalRangeChange(sync);
-    sync(ch.timeScale().getVisibleLogicalRange());
-
-    const byTime = new Map<number, any>(data.candles.map((c: any) => [shift(c.t), c]));
-    ch.subscribeCrosshairMove((p) => {
-      const c = p.time != null ? byTime.get(p.time as number) : null;
-      if (!c) { setHover(null); return; }
-      const vals: Record<string, number | undefined> = {};
-      for (const [k, s] of Object.entries(lineSeries)) vals[k] = (p.seriesData.get(s) as any)?.value;
-      setHover({ ...c, vals });
-    });
-    return () => { ch.remove(); rc.remove(); };
-  }, [data, on, markers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const c = hover ?? data.candles.at(-1);
-  const fmtT = (t: number) => intraday ? new Date((t + IST) * 1000).toISOString().slice(0, 16).replace("T", " ") : day(new Date(t * 1000).toISOString());
-  return (
-    <div className="px-2 pb-3 pt-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2 pb-2 text-[13px] tabular-nums">
-        <span className="text-mute">{fmtT(c.t)}</span>
-        <span>O <b>{n(c.o)}</b></span><span>H <b>{n(c.h)}</b></span><span>L <b>{n(c.l)}</b></span>
-        <span>C <b className={c.c >= c.o ? "text-gain" : "text-loss"}>{n(c.c)}</b></span>
-        <span className="text-mute">Vol {n(c.v, 0)}</span>
-        <span className="ml-auto flex flex-wrap gap-1.5">
-          {[["zones", "S/R zones"], ["structure", "HH/HL"], ["patterns", "Candle patterns"], ["trendlines", "Trendlines"]].map(([k, label]) => (
-            <button key={k} type="button" aria-pressed={!!on[k]} onClick={() => setOn({ ...on, [k]: !on[k] })}
-              className={`rounded-md border px-2 py-0.5 ${on[k] ? "border-dusk-line text-parch" : "border-transparent text-mute"}`}>{label}</button>))}
-          {Object.keys(data.lines ?? {}).map((k) => (
-          <button key={k} type="button" aria-pressed={!!on[k]} onClick={() => setOn({ ...on, [k]: !on[k] })}
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 ${on[k] ? "border-dusk-line text-parch" : "border-transparent text-mute"}`}>
-            <span className="h-0.5 w-4 rounded" style={{ background: on[k] ? LINES[k]?.color : C.line }} />{LINES[k]?.label ?? k}
-            {on[k] && hover?.vals?.[k] != null && <span className="text-parch-dim">{n(hover.vals[k])}</span>}
-          </button>))}</span>
-      </div>
-      <div ref={box} className="h-[420px] w-full" aria-label={`${data.symbol} price chart`} />
-      <div className="flex items-center gap-2 px-2 pt-1 text-[12px] text-mute">RSI 14 <span className="text-parch-dim">{n(data.rsi?.at(-1)?.v, 0)}</span> <span>(above 70 overbought, below 30 oversold)</span></div>
-      <div ref={rsiBox} className="h-[110px] w-full" aria-label="RSI chart" />
-      <p className="px-2 pt-2 text-[12px] text-mute">Arrows mark Syena's entries (▲ buy, ▼ short); dots mark exits. Small markers are candlestick patterns (green bullish, red bearish; named on the last 20 candles); shaded bands are support (green) and resistance (red) zones; HH/HL/LH/LL label the swings (market structure); trendlines (off by default) join the last two swing lows / highs.</p>
-    </div>
   );
 }

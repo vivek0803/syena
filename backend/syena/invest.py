@@ -87,9 +87,26 @@ def deterministic_issues(plan: InvestPlan, ltp: float | None, sizing: dict) -> l
                        "severity": "low"})
     if plan.style == "INTRADAY" and plan.holding_days > 0:
         issues.append({"field": "holding_period", "problem": "intraday trades are squared off the same day", "severity": "medium"})
-    if plan.pe is not None and (plan.pe <= 0 or plan.pe > 300):
-        issues.append({"field": "pe", "problem": f"P/E {plan.pe} looks implausible: please double-check", "severity": "low"})
+    if plan.pe is not None:
+        if plan.pe == 0:  # you marked the company as loss-making: P/E can't be calculated
+            issues.append({"field": "pe", "problem": "loss-making company (P/E 0 = no earnings): judge it on revenue growth, cash and "
+                           "debt, and whether losses are shrinking" + (" — risky for a long-term holding" if plan.style == "LONG_TERM" else ""),
+                           "severity": "medium" if plan.style == "LONG_TERM" else "low"})
+        elif plan.pe < 0 or plan.pe > 300:
+            issues.append({"field": "pe", "problem": f"P/E {plan.pe} looks implausible: please double-check (use 0 for a loss-making company)",
+                           "severity": "low"})
     return issues
+
+
+def company_figures(db: Session, sym: str) -> dict:
+    """What Syena knows about the company: valuation (P/E, PEG), profitability, growth, debt and ownership."""
+    from syena.screener.compare import metrics
+
+    m = metrics(db, [sym])[0]
+    keep = ("pe", "peg", "pb", "eps", "loss_making", "roe", "roe_3y", "debt_to_equity", "sales_growth", "profit_growth",
+            "sales_cagr_3y", "profit_cagr_3y", "eps_cagr_3y", "opm", "free_cash_flow", "fcf_yield", "market_cap", "promoter_holding",
+            "fii_holding", "dii_holding", "fii_change", "dividend_yield", "pct_from_52w_high")
+    return {k: m.get(k) for k in keep if m.get(k) is not None} | {"as_of": m.get("price_day")}
 
 
 def review(db: Session, plan: InvestPlan, md) -> dict:
@@ -117,20 +134,32 @@ def review(db: Session, plan: InvestPlan, md) -> dict:
     consult = pretrade.consult(db, setup, None)
     active = pretrade.retrieve(db, setup, statuses=("ACTIVE",))
     issues = deterministic_issues(plan, ltp, settings_store.get(db, "sizing"))
+    figs = company_figures(db, sym)
+    if plan.pe is not None and plan.pe > 0 and figs.get("pe"):
+        gap = abs(plan.pe - figs["pe"]) / figs["pe"] * 100
+        if gap > 25:
+            issues.append({"field": "pe", "problem": f"your P/E {plan.pe:g} differs from Syena's {figs['pe']:g} (from the latest results and today's price)",
+                           "severity": "low"})
+    if plan.pe and plan.pe > 0 and figs.get("loss_making") == 1:
+        issues.append({"field": "pe", "problem": "Syena's figures show the company is loss-making (no P/E): check the P/E you entered", "severity": "medium"})
     ref = entry_ref(plan, ltp)
     target_px, stop_px = levels(plan, ref)
     ai = {"verdict": None, "issues": [], "suggested": {}, "summary": "AI review unavailable (no API key configured)."}
     ai_call_id = model = None
     if llm.available():
         try:
-            res = llm.call(db, "manual_review", "manual_review", tier="analysis", max_tokens=900, variables={
+            res = llm.call(db, "manual_review", "manual_review", tier="analysis", max_tokens=1100,
+                           web_search=int(settings_store.get(db, "ai_web").get("invest") or 0), variables={
                 "plan": untrusted(json.dumps({**asdict(plan), "entry_price": ref, "target_price": target_px,
                                               "stop_loss_price": stop_px}), "user_plan"),
-                "fundamentals": json.dumps({"pe_from_you": plan.pe, "note": "no independent fundamentals feed is connected; "
-                                            "treat P/E as user-supplied and unverified", "ltp": ltp}),
+                "fundamentals": json.dumps({"pe_from_you": "0 (loss-making: no P/E)" if plan.pe == 0 else plan.pe,
+                                            "syena_figures": figs, "note": "PEG = P/E ÷ EPS growth % (3-year); loss_making 1 = no "
+                                            "earnings, P/E not meaningful", "ltp": ltp}),
                 "news": untrusted(json.dumps(news[:10]), "news"), "technicals": json.dumps(tech),
                 "lessons": pretrade.lessons_context(active)})
             ai, ai_call_id, model = res.data or ai, res.ai_call_id, res.model
+            if res.sources:
+                ai = {**ai, "sources": res.sources}
         except Exception as e:
             ai["summary"] = f"AI review failed: {e}"
     suggested = dict(ai.get("suggested") or {})
@@ -148,7 +177,7 @@ def review(db: Session, plan: InvestPlan, md) -> dict:
     db.add(sig)
     db.commit()
     return {"review_id": sig.id, "symbol": sym, "ltp": ltp, "verdict": verdict, "issues": issues + (ai.get("issues") or []),
-            "suggested": suggested, "levels": {"entry": ref, "target": target_px, "stop_loss": stop_px}, "summary": ai.get("summary"), "technicals": tech, "news": news[:10],
+            "suggested": suggested, "levels": {"entry": ref, "target": target_px, "stop_loss": stop_px}, "summary": ai.get("summary"), "technicals": tech, "news": news[:10], "figures": figs, "sources": ai.get("sources") or [],
             "lessons": consult.consulted, "similar_trades": consult.similar, "ai_call_id": ai_call_id, "plan": asdict(plan)}
 
 

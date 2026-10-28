@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import Sources from "../components/Sources";
 import { Link } from "react-router-dom";
 import { ErrorNote, Field, Page, Panel, Pill } from "../components/ui";
 import { api } from "../lib/api";
@@ -24,7 +25,7 @@ export default function Invest() {
   const toPlan = () => ({
     symbol: f.symbol.trim().toUpperCase(), style: f.style, entry_type: f.entry_type,
     entry_low: f.entry_type === "range" ? Number(f.entry_low) : null, entry_high: f.entry_type === "range" ? Number(f.entry_high) : null,
-    entry_reason: f.entry_reason, pe: f.pe ? Number(f.pe) : null, exit_condition: f.exit_condition,
+    entry_reason: f.entry_reason, pe: f.pe === "" ? null : Number(f.pe), exit_condition: f.exit_condition,
     target_pct: pct(f.target_pct), stop_loss_pct: pct(f.stop_loss_pct), holding_days: Number(f.holding_days || 0),
   });
   const doReview = useAct((p: any) => api("/api/invest/review", { body: p }));
@@ -32,6 +33,9 @@ export default function Invest() {
   const set = (k: string) => (e: any) => { setF({ ...f, [k]: e.target.value }); setReview(null); setPlaced(null); };
   const setStyle = (e: any) => { const v = e.target.value; setF({ ...f, style: v, holding_days: STYLES[v].days }); setReview(null); setPlaced(null); };
   const optional = f.style === "LONG_TERM";
+  const sym = f.symbol.trim().toUpperCase();
+  const info = useApi<any>(sym.length >= 2 ? `/api/stock/${encodeURIComponent(sym)}` : null, { retry: false } as any);
+  const m = info.data?.metrics;
   const submit = (e: FormEvent) => { e.preventDefault(); setPlaced(null); doReview.mutate(toPlan(), { onSuccess: setReview }); };
   const sz = sizing.data?.values?.sizing;
   const live = mode.data?.mode === "LIVE";
@@ -58,12 +62,21 @@ export default function Invest() {
             )}
             <Field label="Why you want to enter"><textarea className="input min-h-[80px]" required value={f.entry_reason} onChange={set("entry_reason")} /></Field>
             <div className="grid grid-cols-3 gap-3">
-              <Field label="Current P/E" hint="as you see it"><input className="input" type="number" step="0.01" value={f.pe} onChange={set("pe")} /></Field>
+              <Field label="Current P/E" hint="0 = in loss (no P/E)"><input className="input" type="number" step="0.01" min="0" value={f.pe} onChange={set("pe")} placeholder={m?.loss_making === 1 ? "0" : m?.pe ? String(m.pe) : ""} /></Field>
               <Field label="Target (% gain)" hint={optional ? "optional" : "e.g. 10"}>
                 <input className="input" type="number" step="0.1" min="0.1" max="1000" required={!optional} value={f.target_pct} onChange={set("target_pct")} placeholder={optional ? "none" : "10"} /></Field>
               <Field label="Stop-loss (% drop)" hint={optional ? "optional" : "e.g. 5"}>
                 <input className="input" type="number" step="0.1" min="0.1" max="99" required={!optional} value={f.stop_loss_pct} onChange={set("stop_loss_pct")} placeholder={optional ? "none" : "5"} /></Field>
             </div>
+            {m?.known && (
+              <div className="-mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-dusk/60 px-3 py-2 text-[13px]">
+                <span className="text-mute">Syena's figures for {sym}:</span>
+                <span>P/E <b>{m.loss_making === 1 ? "— (loss-making)" : m.pe ?? "–"}</b></span>
+                <span>PEG <b>{m.peg ?? "–"}</b>{m.peg != null && <span className="text-mute">{m.peg < 1 ? " (cheap for its growth)" : m.peg > 2 ? " (expensive for its growth)" : ""}</span>}</span>
+                <span>EPS growth 3y <b>{m.eps_cagr_3y != null ? `${m.eps_cagr_3y}%` : "–"}</b></span>
+                <span>ROE <b>{m.roe ?? "–"}</b></span>
+                <button type="button" className="text-saffron hover:underline" onClick={() => { setF({ ...f, pe: m.loss_making === 1 ? "0" : String(m.pe ?? "") }); setReview(null); }}>use</button>
+              </div>)}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Exit condition"><input className="input" value={f.exit_condition} onChange={set("exit_condition")} placeholder="e.g. results miss estimates" /></Field>
               <Field label="Holding period (days)" hint={optional ? "0 = no limit" : undefined}><input className="input" type="number" min={0} value={f.holding_days} onChange={set("holding_days")} /></Field>
@@ -90,6 +103,7 @@ export default function Invest() {
                 </p>
               )}
               {review.summary && <p>{review.summary}</p>}
+              <Sources items={review.sources} />
               {review.issues.length > 0 && (
                 <ul className="space-y-1.5">{review.issues.map((i: any, k: number) => (
                   <li key={k} className="flex gap-2"><Pill tone={i.severity === "high" ? "loss" : i.severity === "medium" ? "warn" : "mute"}>{i.severity}</Pill><span><b>{i.field}</b>: {i.problem}</span></li>))}</ul>

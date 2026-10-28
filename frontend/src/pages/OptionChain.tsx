@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Empty, ErrorNote, Field, Loading, Modal, Page, Panel, Stat, useToast } from "../components/ui";
 import OptionTrades from "../components/OptionTrades";
+import NiftyStrategy from "../components/NiftyStrategy";
 import { api } from "../lib/api";
 import { useAct } from "../lib/hooks";
 import { when } from "../lib/format";
@@ -102,7 +103,6 @@ export default function OptionChain() {
             <p className="px-4 py-3 text-[12px] text-mute">Bars show each strike's open interest against the biggest one. Hover a change-in-OI figure for its build-up (price up + OI up = long build-up; price down + OI up = short build-up; price up + OI down = short covering; price down + OI down = long unwinding). IV and delta are worked out with Black-Scholes from the mid price.</p>
           </Panel>
 
-          <OptionTrades />
 
           <Panel title="Open interest by strike">
             <div className="h-72"><ResponsiveContainer width="100%" height="100%">
@@ -119,6 +119,8 @@ export default function OptionChain() {
             </ResponsiveContainer></div>
           </Panel>
         </>)}
+        <NiftyStrategy />
+        <OptionTrades />
       </div>
       {toast.node}
       <Modal open={!!buy} onClose={() => setBuy(null)} title={buy ? `Buy ${c?.underlying} ${buy.strike} ${buy.type === "CE" ? "call" : "put"} (paper)` : ""}>

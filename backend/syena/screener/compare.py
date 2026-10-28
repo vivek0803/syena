@@ -53,8 +53,13 @@ def metrics(db: Session, symbols: list[str]) -> list[dict]:
                "price_day": d.day.isoformat() if d else None,
                "fundamentals_at": s.fundamentals_at.isoformat() if s and s.fundamentals_at else None}
         for f, (table, col, _label) in FIELDS.items():
+            if table == "computed":
+                continue
             src = d if table == "daily" else s
             row[f] = _num(getattr(src, col)) if src is not None else None
+        from syena.screener.screens import computed_fields
+
+        row.update(computed_fields(s))
         out.append(row)
     return out
 
@@ -170,7 +175,10 @@ def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str |
     keep = [f for f in FIELDS if f not in ("volume", "high_52w", "low_52w", "book_value", "dividend_ps")]
     top = [dict(t, formula_score=scores[t["symbol"]]["score"], breakdown=scores[t["symbol"]]["breakdown"]) for t in table[:AI_EXPLAIN]]
     others = [f"{t['symbol']}: {scores[t['symbol']]['score']}" for t in table[AI_EXPLAIN:]]
+    from syena import settings_store
+
     res = llm.call(db, "stock_compare", "stock_compare", tier="premium", max_tokens=1500 + 120 * len(top), temperature=0,
+                   web_search=int(settings_store.get(db, "ai_web").get("compare") or 0),
                    variables={
         "horizon": HORIZONS.get(horizon, HORIZONS["LONG_TERM"]),
         "fields": json.dumps({**{f: FIELDS[f][2] for f in keep}, **TECH_FIELDS}),
@@ -178,7 +186,10 @@ def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str |
         "others": ", ".join(others) or "(none)",
         "note": untrusted(note.strip()[:500], "user_preference") if note and note.strip() else "(none)",
     })
-    return res.data or {}, res.model
+    data = dict(res.data or {})
+    if res.sources:
+        data["sources"] = res.sources
+    return data, res.model
 
 
 def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", note: str | None = None) -> dict:
@@ -219,6 +230,7 @@ def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", 
     lst = lambda k: [str(x)[:300] for x in (ai.get(k) or [])][:6]  # noqa: E731
     out = {"top_pick": ranking[0]["symbol"], "ranking": ranking, "top_pick_reasons": lst("top_pick_reasons"),
            "risks": lst("risks"), "data_gaps": lst("data_gaps"), "summary": str(ai.get("summary") or "")[:800],
+           "sources": [x for x in (ai.get("sources") or []) if isinstance(x, dict)][:10],
            "method": "fixed formula + AI review (max ±10 points)", "rubric": {k: w for k, (w, _) in scoring.RUBRICS[horizon if horizon in scoring.RUBRICS else "LONG_TERM"].items()},
            "horizon": horizon, "model": model, "stocks": list(wl.symbols or []), "note": note or None, "rounds": 1,
            "input_key": key}

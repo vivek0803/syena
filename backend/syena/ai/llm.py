@@ -41,16 +41,28 @@ class LLMResult:
     ai_call_id: int
     cost_usd: float
     latency_ms: int
+    sources: list | None = None  # [{"title", "url"}] when the model searched the web
+    searches: int = 0
 
 
 CACHE_MIN_CHARS = 4000  # ~1,000+ tokens: below the API's minimum a cache mark does nothing anyway
 CACHE_READ_FACTOR, CACHE_WRITE_FACTOR = 0.1, 1.25  # of the normal input price
 
 
+WEB_SEARCH_USD = 0.01  # per search (Anthropic web search tool: $10 per 1,000)
+WEB_NOTE = ("\nLIVE MARKET DATA: you have a web_search tool. Use it for anything current that the provided data doesn't "
+            "cover: today's or recent price moves, latest results and guidance, analyst views, news, sector and index moves, "
+            "commodity/currency/rate levels. Prefer NSE/BSE filings, company releases and established financial news sites. "
+            "Say where each outside figure comes from (site and date). Syena's own figures stay the basis wherever they exist; "
+            "if the web disagrees with them, say so. Keep the required JSON output format.")
+
+
 class Backend:
     last_cache: tuple[int, int] = (0, 0)  # (tokens read from cache, tokens written to cache) on the last call
+    last_web: tuple[int, list] = (0, [])  # (searches made, sources cited) on the last call
 
-    def complete(self, model: str, system: str, user: str, max_tokens: int, images=None, temperature=None) -> tuple[str, int, int]:
+    def complete(self, model: str, system: str, user: str, max_tokens: int, images=None, temperature=None,
+                 web_search: int = 0) -> tuple[str, int, int]:
         raise NotImplementedError
 
 
@@ -60,7 +72,7 @@ class AnthropicBackend(Backend):
 
         self.client = anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=60)
 
-    def complete(self, model, system, user, max_tokens, images=None, temperature=None):
+    def complete(self, model, system, user, max_tokens, images=None, temperature=None, web_search=0):
         content = user
         if images:  # [(media_type, bytes)] -> image blocks followed by the text
             import base64
@@ -68,6 +80,9 @@ class AnthropicBackend(Backend):
             content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(b).decode()}}
                        for mt, b in images] + [{"type": "text", "text": user}]
         kw = {"temperature": temperature} if temperature is not None else {}
+        if web_search:  # Anthropic's server-side web search: the model searches and reads pages itself
+            kw["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": int(web_search),
+                            "user_location": {"type": "approximate", "country": "IN", "timezone": "Asia/Kolkata"}}]
         # Long system prompts (the news-analysis playbook) are the same on every call: mark them cacheable so
         # repeat calls within a few minutes pay about a tenth for that part. Short ones are sent as plain text.
         sys_arg = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if len(system) >= CACHE_MIN_CHARS else system
@@ -78,12 +93,26 @@ class AnthropicBackend(Backend):
         except Exception as e:  # a model that doesn't take a temperature: ask again without it
             if not kw or "temperature" not in str(e).lower():
                 raise
+            kw.pop("temperature", None)
             r = self.client.messages.create(model=model, max_tokens=max_tokens, system=sys_arg,
-                                            messages=[{"role": "user", "content": content}])
+                                            messages=[{"role": "user", "content": content}], **kw)
         if getattr(r, "stop_reason", None) == "max_tokens":
             log.warning("AI answer cut off at the token limit", extra={"model": model, "max_tokens": max_tokens})
-        text = "".join(getattr(b, "text", "") for b in r.content)
+        # with web search the answer is the text after the last search result; earlier text is the model thinking aloud
+        blocks = list(r.content)
+        last_tool = max((i for i, b in enumerate(blocks) if getattr(b, "type", "") in ("server_tool_use", "web_search_tool_result")), default=-1)
+        text = "".join(getattr(b, "text", "") for b in blocks[last_tool + 1:] if getattr(b, "type", "text") == "text") or \
+            "".join(getattr(b, "text", "") for b in blocks)
+        sources, seen = [], set()
+        for b in blocks:
+            for c in getattr(b, "citations", None) or []:
+                url = getattr(c, "url", None)
+                if url and url not in seen:
+                    seen.add(url)
+                    sources.append({"title": getattr(c, "title", None) or url, "url": url})
         u = r.usage
+        stu = getattr(u, "server_tool_use", None)
+        self.last_web = (int(getattr(stu, "web_search_requests", 0) or 0) if stu else 0, sources[:12])
         self.last_cache = (int(getattr(u, "cache_read_input_tokens", 0) or 0), int(getattr(u, "cache_creation_input_tokens", 0) or 0))
         return text, u.input_tokens, u.output_tokens
 
@@ -95,8 +124,9 @@ class FakeBackend(Backend):
         self.handler = handler
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, model, system, user, max_tokens, images=None, temperature=None):
+    def complete(self, model, system, user, max_tokens, images=None, temperature=None, web_search=0):
         self.calls.append((model, user))
+        self.last_web = (1 if web_search else 0, [{"title": "test source", "url": "https://example.com/x"}] if web_search else [])
         out = self.handler(model, system, user + (f"\n[{len(images)} image(s)]" if images else ""))
         return out, len(system + user) // 4, len(out) // 4
 
@@ -162,7 +192,9 @@ def extract_json(text: str) -> dict:
 
 def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None, model: str | None = None,
          variables: dict | None = None, max_tokens: int = 1200, want_json: bool = True, shadow: bool = False,
-         eval_run_id: int | None = None, images: list | None = None, temperature: float | None = None) -> LLMResult:
+         eval_run_id: int | None = None, images: list | None = None, temperature: float | None = None,
+         web_search: int = 0) -> LLMResult:
+    """web_search: let the model search the web up to this many times (0 = only the data given)."""
     prompt = PROMPTS[prompt_name]
     model = model or (model_for(db, tier) if tier else None)
     if not model:
@@ -171,6 +203,8 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
     if eval_run_id is None and spent_today(db) >= budget:
         raise BudgetExceeded(f"daily AI budget ${budget} reached")
     system, user = prompt.render(**(variables or {}))
+    if web_search:
+        system += WEB_NOTE
     be = backend()
     last_err = None
     for attempt in range(2):
@@ -183,16 +217,19 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
             # second attempt gets more room: a truncated answer is the usual cause of unparseable JSON
             text, tin, tout = be.complete(model, system, u, max_tokens if attempt == 0 else max(max_tokens * 2, 1000),
                                           **({"images": images} if images else {}),
-                                          **({"temperature": temperature} if temperature is not None else {}))
+                                          **({"temperature": temperature} if temperature is not None else {}),
+                                          **({"web_search": web_search} if web_search else {}))
             cread, cwrite = getattr(be, "last_cache", (0, 0)) or (0, 0)
             be.last_cache = (0, 0)
+            nsearch, sources = getattr(be, "last_web", (0, [])) or (0, [])
+            be.last_web = (0, [])
             row.response_raw, row.input_tokens, row.output_tokens = text, tin + cread + cwrite, tout
-            row.cost_usd = cost(db, model, tin, tout, cread, cwrite)
+            row.cost_usd = round(cost(db, model, tin, tout, cread, cwrite) + nsearch * WEB_SEARCH_USD, 6)
             row.latency_ms = int((time.monotonic() - t0) * 1000)
             data = extract_json(text) if want_json else None
             db.add(row)
             db.commit()
-            return LLMResult(text, data, model, prompt.version, row.id, row.cost_usd, row.latency_ms)
+            return LLMResult(text, data, model, prompt.version, row.id, row.cost_usd, row.latency_ms, sources or None, nsearch)
         except (LLMBadOutput, json.JSONDecodeError) as e:
             last_err = e
             row.success, row.error = False, f"bad output: {e}"

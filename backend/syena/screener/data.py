@@ -68,7 +68,7 @@ def sync_universe(db: Session, symbols: list[str]) -> dict:
 # ---------------------------------------------------------------- daily prices + ratios
 def compute_ratios(s: Stock, close: float, w52_high: float | None) -> dict:
     out = {"market_cap_cr": None, "pe": None, "pb": None, "ps": None, "ev_ebitda": None, "dividend_yield": None,
-           "earnings_yield": None, "pct_from_52w_high": None, "fcf_yield": None}
+           "earnings_yield": None, "pct_from_52w_high": None, "fcf_yield": None, "peg": None}
     if not close or close <= 0:
         return out
     mcap = close * s.shares_outstanding if s.shares_outstanding else None
@@ -84,6 +84,7 @@ def compute_ratios(s: Stock, close: float, w52_high: float | None) -> dict:
         out["earnings_yield"] = round(s.eps_ttm / close * 100, 2)
         if s.eps_ttm > 0:
             out["pe"] = round(close / s.eps_ttm, 2)
+            out["peg"] = peg(out["pe"], s)
     if s.book_value_ps and s.book_value_ps > 0:
         out["pb"] = round(close / s.book_value_ps, 2)
     if s.dividend_ps is not None:
@@ -91,6 +92,22 @@ def compute_ratios(s: Stock, close: float, w52_high: float | None) -> dict:
     if w52_high and w52_high > 0:
         out["pct_from_52w_high"] = round((close / w52_high - 1) * 100, 2)
     return out
+
+
+def growth_for_peg(s: Stock) -> float | None:
+    """Earnings growth % a year used for PEG: 3-year EPS CAGR, else 3-year profit CAGR, else the latest profit growth."""
+    for g in (getattr(s, "eps_cagr_3y", None), getattr(s, "profit_cagr_3y", None), s.profit_growth):
+        if g is not None:
+            return g
+    return None
+
+
+def peg(pe: float | None, s: Stock) -> float | None:
+    """P/E ÷ growth. Only meaningful for a profitable, growing company (positive P/E and growth)."""
+    g = growth_for_peg(s)
+    if not pe or pe <= 0 or g is None or g <= 0:
+        return None
+    return round(pe / g, 2)
 
 
 def _w52_from_history(db: Session, symbol: str, day: date, close: float) -> tuple[float | None, float | None]:
@@ -159,11 +176,18 @@ def fetch_yahoo(symbol: str) -> dict:
         raise ValueError("no fundamentals on Yahoo")
     pct = lambda k: None if _f(info.get(k)) is None else round(_f(info.get(k)) * 100, 2)  # noqa: E731
     de = _f(info.get("debtToEquity"))
+    tk = yf.Ticker(f"{symbol}.NS")
     try:  # annual statements: cash flow and 3-year figures (a missing statement must not lose the rest)
-        hist = annual_figures(yf.Ticker(f"{symbol}.NS"))
+        hist = annual_figures(tk)
     except Exception as e:
         log.info("annual statements unavailable", extra={"symbol": symbol, "error": str(e)[:120]})
         hist = {}
+    try:  # the statement tables for the company page
+        from syena.screener.company import statements
+
+        hist["_statements"] = statements(tk)
+    except Exception as e:
+        log.info("statements unavailable", extra={"symbol": symbol, "error": str(e)[:120]})
     if hist.get("free_cash_flow") is None and _f(info.get("freeCashflow")) is not None:
         hist["free_cash_flow"] = round(_f(info.get("freeCashflow")) / 1e7, 2)
     if hist.get("operating_cash_flow") is None and _f(info.get("operatingCashflow")) is not None:
@@ -270,7 +294,13 @@ def refresh_fundamentals(db: Session, limit: int | None = None, fetch=fetch_yaho
     ok, failed, throttled = [], 0, 0
     for s in todo:
         try:
-            apply_fundamentals(s, fetch(s.symbol), "yahoo")
+            data = fetch(s.symbol)
+            st = data.pop("_statements", None) if isinstance(data, dict) else None
+            apply_fundamentals(s, data, "yahoo")
+            if st:
+                from syena.screener.company import store_statements
+
+                store_statements(db, s.symbol, st)
             ok.append(s.symbol)
             throttled = 0
         except Exception as e:

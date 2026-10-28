@@ -109,6 +109,9 @@ def chart(symbol: str, range: str = "1Y", interval: str | None = None, db: Sessi
         **empty,
         "candles": [{"t": t(ts), "o": _num(r.open), "h": _num(r.high), "l": _num(r.low), "c": _num(r.close), "v": _num(r.volume)}
                     for ts, r in view.iterrows()],
+        # up to 300 candles before the visible range, so indicators drawn in the browser start complete
+        "warm": [{"t": t(ts), "o": _num(r.open), "h": _num(r.high), "l": _num(r.low), "c": _num(r.close), "v": _num(r.volume)}
+                 for ts, r in df[~keep.values].tail(300).iterrows()],
         "lines": {k: [{"t": t(ts), "v": _num(v)} for ts, v in s_[keep.values].items() if _num(v) is not None] for k, s_ in lines.items()},
         "rsi": [{"t": t(ts), "v": _num(v)} for ts, v in rsi[keep.values].items() if _num(v) is not None],
         "patterns": [p(f) for f in pat.found(df, last=len(view), chart_only=True)],

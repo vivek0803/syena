@@ -1,4 +1,5 @@
 import StockLink from "../components/StockLink";
+import QueryBox from "../components/QueryBox";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Empty, ErrorNote, Field, Loading, Modal, Page, Panel, Pill, Stat, Table, Tabs, useToast } from "../components/ui";
@@ -11,7 +12,7 @@ const num = (key: string, label: string, d = 1, colour = false) => ({
   key, label, align: "right" as const,
   render: (r: any) => colour ? <span className={r[key] > 0 ? "text-gain" : r[key] < 0 ? "text-loss" : ""}>{r[key] > 0 ? "+" : ""}{n(r[key], d)}</span> : n(r[key], d),
 });
-const stockCol = { key: "symbol", label: "Stock", className: "whitespace-normal min-w-[160px]", render: (r: any) => <><StockLink symbol={r.symbol} /><div className="text-[13px] text-mute">{r.name ?? ""}</div></> };
+const stockCol = { key: "symbol", label: "Stock", className: "whitespace-normal min-w-[160px]", render: (r: any) => <><Link to={`/company/${r.symbol}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-sky hover:underline">{r.name ?? r.symbol}</Link><div className="text-[12px] text-mute"><StockLink symbol={r.symbol} className="font-mono" /></div></> };
 const VIEWS: Record<string, { label: string; cols: any[] }> = {
   overview: { label: "Overview", cols: [stockCol, num("price", "Price", 2), num("change", "Day %", 2, true), num("market_cap", "Mcap ₹cr", 0), num("pe", "P/E"), num("pb", "P/B"),
     num("roe", "ROE %"), num("debt_to_equity", "D/E", 2), num("sales_growth", "Sales gr %"), num("profit_growth", "Profit gr %"), num("dividend_yield", "Div yld %", 2), num("pct_from_52w_high", "vs 52w high %")] },
@@ -84,17 +85,21 @@ function CsvModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 function ScreenerHome() {
-  const [tab, setTab] = useState("screens");
+  const [tab, setTab] = useState("all");
   return (
     <Page title="Screener" intro="Every NSE stock with daily prices and ratios. Save screens to get Telegram alerts when stocks enter or leave them, and technical signals on the ones that pass.">
       <div className="space-y-6">
         <DataStatus />
-        <Tabs tabs={[{ id: "screens", label: "My screens" }, { id: "all", label: "All stocks" }]} value={tab} onChange={setTab} />
+        <Tabs tabs={[{ id: "all", label: "Screen stocks" }, { id: "screens", label: "My saved screens" }]} value={tab} onChange={setTab} />
         {tab === "screens" ? <Screens /> : <AllStocks />}
       </div>
     </Page>
   );
 }
+
+const COLS_KEY = "syena.screener.columns";
+const DEFAULT_COLS = ["price", "pe", "market_cap", "dividend_yield", "profit_growth", "sales_growth", "roe", "roce_3y", "peg"];
+const loadCols = (): string[] => { try { const v = JSON.parse(localStorage.getItem(COLS_KEY) ?? "null"); return Array.isArray(v) && v.length ? v : DEFAULT_COLS; } catch { return DEFAULT_COLS; } };
 
 function AllStocks() {
   const [where, setWhere] = useState("");
@@ -103,26 +108,64 @@ function AllStocks() {
   const [sort, setSort] = useState("market_cap");
   const [desc, setDesc] = useState(true);
   const [page, setPage] = useState(0);
-  const [view, setView] = useState("overview");
+  const [view, setView] = useState("custom");
+  const [custom, setCustom] = useState<string[]>(loadCols);
+  const [picking, setPicking] = useState(false);
+  const fields = useApi<any[]>("/api/screener/fields");
+  const label = (k: string) => fields.data?.find((f: any) => f.key === k)?.label ?? k;
   const qs = new URLSearchParams({ where: applied, q, sort, desc: String(desc), limit: "100", offset: String(page * 100) });
   const { data, error, isLoading } = useApi<any>(`/api/screener/stocks?${qs}`);
-  const sortable = VIEWS[view].cols.map((c) => ({ ...c, label: <button className="hover:text-parch" onClick={() => { setSort(c.key === "symbol" ? "symbol" : c.key); setDesc(sort === c.key ? !desc : true); setPage(0); }}>{c.label}{sort === c.key ? (desc ? " ↓" : " ↑") : ""}</button> as any }));
+  // like screener.in: fields used in the query are shown as columns too
+  const used = (fields.data ?? []).map((f: any) => f.key).filter((k: string) => new RegExp(`(^|[^a-z_])${k}([^a-z_]|$)`).test(applied.toLowerCase()));
+  const customCols = [stockCol, ...Array.from(new Set([...custom, ...used])).map((k) => num(k, label(k), k.includes("market_cap") || k.includes("cash_flow") ? 0 : 2, k.endsWith("_change") || k === "change"))];
+  const cols = view === "custom" ? customCols : VIEWS[view].cols;
+  const sortable = cols.map((c: any) => ({ ...c, label: <button className="hover:text-parch" onClick={() => { setSort(c.key === "symbol" ? "symbol" : c.key); setDesc(sort === c.key ? !desc : true); setPage(0); }}>{c.label}{sort === c.key ? (desc ? " ↓" : " ↑") : ""}</button> as any }));
+  const saveCols = (v: string[]) => { setCustom(v); try { localStorage.setItem(COLS_KEY, JSON.stringify(v)); } catch { /* private mode */ } };
+  const exportCsv = async () => {
+    const all = await api<any>(`/api/screener/stocks?${new URLSearchParams({ where: applied, q, sort, desc: String(desc), limit: "500", offset: "0" })}`);
+    const keys = ["symbol", "name", ...cols.filter((c: any) => c.key !== "symbol").map((c: any) => c.key)];
+    const esc = (v: any) => (v == null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const csv = [keys.map((k) => (k === "symbol" || k === "name" ? k : label(k))).join(","), ...all.rows.map((r: any) => keys.map((k) => esc(r[k])).join(","))].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "syena-screen.csv"; a.click(); URL.revokeObjectURL(url);
+  };
+  const run = () => { setApplied(where); setPage(0); };
   return (
-    <Panel>
-      <form className="mb-4 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); setApplied(where); setPage(0); }}>
-        <Field label="Filter (same language as screens)"><input className="input min-w-[340px]" value={where} onChange={(e) => setWhere(e.target.value)} placeholder="roe > 15 and pe < 25" /></Field>
-        <Field label="Search"><input className="input" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="symbol or name" /></Field>
-        <button className="btn-primary">Apply</button>
+    <Panel title="Create a stock screen" aside={<span className="text-[12px] text-mute">every NSE stock · same language as saved screens</span>}>
+      <form className="mb-4 grid gap-3 lg:grid-cols-[1fr_260px]" onSubmit={(e) => { e.preventDefault(); run(); }}>
+        <div>
+          <QueryBox value={where} onChange={setWhere} onRun={run} placeholder={"Market Capitalization > 500 AND\nPrice to earning < 15 AND\nReturn on capital employed > 22%"} />
+          <p className="mt-1 text-[12px] text-mute">Type a field and pick it from the list (Tab or Enter). Combine with AND / OR, brackets allowed. Ctrl+Enter runs. Examples: <button type="button" className="text-saffron hover:underline" onClick={() => setWhere(examples[1])}>value</button> · <button type="button" className="text-saffron hover:underline" onClick={() => setWhere("roce_3y > 20 and sales_cagr_3y > 15 and debt_to_equity < 0.5 and peg < 1.5")}>quality growth</button> · <button type="button" className="text-saffron hover:underline" onClick={() => setWhere("fii_change > 0.5 and dii_change > 0 and market_cap > 2000")}>institutions buying</button> · <button type="button" className="text-saffron hover:underline" onClick={() => setWhere("loss_making = 1 and sales_growth > 30")}>loss-making but growing</button></p>
+        </div>
+        <div className="space-y-2">
+          <input className="input" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="Search name or symbol" aria-label="Search" />
+          <button className="btn-primary w-full">Run this query</button>
+          {applied && <button type="button" className="btn-ghost w-full" onClick={() => { setWhere(""); setApplied(""); }}>Clear</button>}
+        </div>
       </form>
       <ErrorNote error={error} />
       {isLoading ? <Loading /> : data && (<>
-        <div className="mb-3 flex flex-wrap gap-1.5">{Object.entries(VIEWS).map(([k, v]) => (
-          <button key={k} type="button" onClick={() => setView(k)}
-            className={`rounded-md px-2.5 py-1 text-[13px] ${view === k ? "bg-saffron/15 text-saffron" : "text-mute hover:text-parch"}`}>{v.label}</button>))}</div>
-        <p className="mb-2 text-sm text-mute">{n(data.total, 0)} stocks{data.day ? ` · prices of ${day(data.day)}` : " · prices not loaded yet: click 'Update prices now'"}</p>
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {[["custom", "My columns"], ...Object.entries(VIEWS).map(([k, v]) => [k, v.label])].map(([k, lbl]) => (
+            <button key={k} type="button" onClick={() => setView(k)}
+              className={`rounded-md px-2.5 py-1 text-[13px] ${view === k ? "bg-saffron/15 text-saffron" : "text-mute hover:text-parch"}`}>{lbl}</button>))}
+          <span className="ml-auto flex gap-2">
+            {view === "custom" && <button type="button" className="btn-ghost py-1 text-[13px]" onClick={() => setPicking(!picking)}>Edit columns</button>}
+            <button type="button" className="btn-ghost py-1 text-[13px]" onClick={exportCsv}>Export CSV</button>
+          </span>
+        </div>
+        {picking && view === "custom" && (
+          <div className="mb-3 rounded-lg border border-dusk-line bg-dusk/50 p-3">
+            <div className="mb-2 flex items-center justify-between text-[13px] text-mute"><span>Pick the columns to show</span><button type="button" className="text-saffron hover:underline" onClick={() => saveCols(DEFAULT_COLS)}>reset</button></div>
+            <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">{(fields.data ?? []).map((f: any) => (
+              <label key={f.key} className="flex items-center gap-2 text-[13px] text-parch-dim">
+                <input type="checkbox" checked={custom.includes(f.key)} onChange={(e) => saveCols(e.target.checked ? [...custom, f.key] : custom.filter((x) => x !== f.key))} />{f.label}</label>))}</div>
+          </div>)}
+        <p className="mb-2 text-sm text-mute">{n(data.total, 0)} results{applied ? " for your query" : ""}{data.day ? ` · prices of ${day(data.day)}` : " · prices not loaded yet: click 'Update prices now'"} · click a name for its company page</p>
         <Table cols={sortable} rows={data.rows} rowKey={(r: any) => r.symbol} />
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <button className="btn-ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+          <span className="text-[13px] text-mute">page {page + 1} of {Math.max(1, Math.ceil(data.total / 100))}</span>
           <button className="btn-ghost" disabled={(page + 1) * 100 >= data.total} onClick={() => setPage(page + 1)}>Next</button>
         </div>
       </>)}

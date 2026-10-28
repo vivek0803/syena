@@ -41,7 +41,7 @@ export default function Trades() {
             { key: "invested_amount", label: "Invested", align: "right", render: (r: any) => money(r.invested_amount) },
             { key: "entry_price", label: "Entry", align: "right", render: (r: any) => money(r.entry_price) },
             { key: "exit", label: "Exit / last", align: "right", render: (r: any) => money(r.exit_price_executed ?? r.last_price) },
-            { key: "stop_loss", label: "Stop", align: "right", render: (r: any) => money(r.stop_loss) },
+            { key: "stop_loss", label: "Stop", align: "right", render: (r: any) => <>{money(r.stop_loss)}{r.trail?.moved > 0 && <div className="text-[11px] text-gain" title={`trailing stop, raised ${r.trail.moved}×`}>↑ trailing from {money(r.trail.initial_stop)}</div>}</> },
             { key: "target", label: "Target", align: "right", render: (r: any) => money(r.target) },
             { key: "charges", label: "Charges", align: "right", render: (r: any) => money(r.charges) },
             { key: "pnl", label: "P&L", align: "right", render: (r: any) => { const v = r.profit_loss ?? r.unrealised; return <span className={tone(v)}>{signed(v)}{r.status === "OPEN" ? " (open)" : ""}</span>; } },

@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, ReactNode, useEffect, useRef, useState } from "react";
+import Sources from "../components/Sources";
 import { Link, useSearchParams } from "react-router-dom";
 import { ErrorNote, Page } from "../components/ui";
 import { api } from "../lib/api";
@@ -42,12 +43,12 @@ export default function Ask() {
     setQ(""); setBusy(true); setErr(null);
     try {
       const r = await api<any>("/api/ask", { body: { question, history } });
-      setMsgs((m) => [...m, { role: "assistant", content: r.answer, symbols: r.symbols, refused: !r.in_scope }]);
+      setMsgs((m) => [...m, { role: "assistant", content: r.answer, symbols: r.symbols, refused: !r.in_scope, sources: r.sources }]);
     } catch (ex) { setErr(ex); } finally { setBusy(false); }
   };
 
   return (
-    <Page title="Syena AI" intro="Questions about stocks, the market and your portfolio, answered with Syena's own data: company figures, charts, news verdicts and your holdings. Market questions only."
+    <Page title="Syena AI" intro="Questions about stocks, the market and your portfolio, answered with Syena's own data (company figures, charts, news verdicts, your holdings) plus live market information from the web, with sources. Market questions only."
       actions={msgs.length > 0 ? <button className="btn-ghost" onClick={() => setMsgs([])}>New chat</button> : undefined}>
       <div className="mx-auto max-w-3xl space-y-4">
         {!msgs.length && (
@@ -59,9 +60,10 @@ export default function Ask() {
               {m.role === "user" ? m.content : <Rich text={m.content} />}
               {m.symbols && m.symbols.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2 text-[12px] text-mute">Used Syena data on {m.symbols.map((s) => <Link key={s} to={`/stock/${s}`} className="text-saffron hover:underline">{s}</Link>)}</div>)}
+              {m.role !== "user" && <Sources items={(m as any).sources} />}
             </div>
           </div>))}
-        {busy && <div className="panel px-4 py-3 text-sm text-mute">Looking at the data…</div>}
+        {busy && <div className="panel px-4 py-3 text-sm text-mute">Looking at Syena's data and the latest market news…</div>}
         <ErrorNote error={err} />
         <div ref={end} />
         <form onSubmit={send} className="sticky bottom-3 flex gap-2 rounded-xl border border-dusk-line bg-dusk-panel p-2 shadow-lg">
@@ -69,7 +71,7 @@ export default function Ask() {
             placeholder="Ask about a stock, the market or your holdings…" aria-label="Your question" />
           <button className="btn-primary" disabled={busy || !q.trim()}>Ask</button>
         </form>
-        <p className="text-center text-[12px] text-mute">Answers use Syena's latest data and can be wrong. Not investment advice.</p>
+        <p className="text-center text-[12px] text-mute">Answers use Syena's latest data and web sources, and can be wrong. Not investment advice.</p>
       </div>
     </Page>
   );

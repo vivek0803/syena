@@ -145,6 +145,8 @@ class Trade(Base):
     exit_price_executed: Mapped[float | None] = mapped_column(Float, nullable=True)
     stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
     target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # trailing stop state: {"initial_stop", "dist", "activate_at", "best", "moved", "last_moved_at"}
+    trail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     charges: Mapped[float] = mapped_column(Float, default=0)
     profit_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)

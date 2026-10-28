@@ -1,3 +1,4 @@
+import Sources from "../components/Sources";
 import StockLink from "../components/StockLink";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -163,6 +164,7 @@ function AiPanel({ id, list }: { id: number; list: any }) {
             <div className="mt-1 font-display text-2xl font-semibold">{r.top_pick}{top?.score != null && <span className="ml-3 text-base font-normal text-parch-dim">score {top.score}/100</span>}</div>
             {r.summary && <p className="mt-2 text-parch-dim">{r.summary}</p>}
             {r.top_pick_reasons?.length > 0 && <ul className="mt-2 list-disc pl-5 text-sm">{r.top_pick_reasons.map((x: string) => <li key={x}>{x}</li>)}</ul>}
+            <Sources items={r.sources} />
           </div>
           <div>
             <div className="mb-2 text-sm font-semibold">Ranking</div>

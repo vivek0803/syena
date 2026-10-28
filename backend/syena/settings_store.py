@@ -65,6 +65,15 @@ DEFAULTS: dict[str, Any] = {
     # Fundamental screener: company figures refresh a batch of stocks every night (whole universe ~weekly).
     "screener": {"fundamentals_per_night": 400, "fundamentals_max_age_days": 7, "prefer_csv_days": 100, "shareholding_per_night": 150,
                  "signal_lookback_days": 400},
+    # Live market data for the AI: how many web searches each feature may make per answer (0 = Syena's data only).
+    # Each search costs about $0.01 on top of the tokens.
+    "ai_web": {"ask": 4, "compare": 4, "invest": 3, "news_analysis": 0},
+    # Trailing stop-loss for news / algo share trades and all option trades (execution/trailing.py)
+    "trailing": {"enabled": True, "equity": {"activate_r": 1.0, "distance_r": 1.0},
+                 "options": {"activate_pct": 20.0, "trail_pct": 25.0}},
+    # NIFTY daily options strategy (market/nifty_options.py), paper only
+    "nifty_options": {"enabled": True, "lots": 1, "stop_pct": 25.0, "target_pct": 50.0, "min_days_to_expiry": 1,
+                      "entry_start": "09:30", "entry_end": "11:30", "max_range_pct": 1.2, "pcr_min_call": 0.7, "pcr_max_put": 1.4},
     # Options (paper only): Syena buys calls (bullish) or puts (bearish), never writes options.
     "options": {"enabled": True, "news_enabled": True, "min_premium": 2000, "max_premium": 15000, "max_lots": 3,
                 "max_open": 5, "max_per_day": 10, "stop_pct": 30, "target_pct": 60, "strike": "ATM",

@@ -19,7 +19,8 @@ log = logging.getLogger("syena.screener")
 
 # canonical field -> (table, column, label)
 FIELDS = {
-    "pe": ("daily", "pe", "P/E"), "pb": ("daily", "pb", "P/B"), "ps": ("daily", "ps", "Price/Sales"),
+    "pe": ("daily", "pe", "P/E"), "peg": ("daily", "peg", "PEG ratio"),
+    "loss_making": ("computed", None, "Loss-making (1 = yes, 0 = no): no P/E"), "pb": ("daily", "pb", "P/B"), "ps": ("daily", "ps", "Price/Sales"),
     "ev_ebitda": ("daily", "ev_ebitda", "EV/EBITDA"), "market_cap": ("daily", "market_cap_cr", "Market cap (₹ cr)"),
     "dividend_yield": ("daily", "dividend_yield", "Dividend yield %"), "earnings_yield": ("daily", "earnings_yield", "Earnings yield %"),
     "price": ("daily", "close", "Price"), "volume": ("daily", "volume", "Volume"), "change": ("daily", "change_pct", "Day change %"),
@@ -45,6 +46,8 @@ FIELDS = {
     "promoter_change": ("stock", "promoter_change", "Promoter change last quarter (pts)"),
 }
 ALIASES = [  # longest first
+    ("return on capital employed", "roce_3y"), ("price to earning", "pe"), ("price to book value", "pb"),
+    ("dividend payout", "dividend_ps"),
     ("3 year average roce", "roce_3y"), ("3 year avg roce", "roce_3y"), ("3 year roce", "roce_3y"), ("roce 3 year", "roce_3y"),
     ("roce 3y", "roce_3y"), ("3 year average roe", "roe_3y"), ("3 year avg roe", "roe_3y"), ("3 year roe", "roe_3y"),
     ("roe 3 year", "roe_3y"), ("roe 3y", "roe_3y"), ("3 year sales growth", "sales_cagr_3y"), ("sales growth 3 year", "sales_cagr_3y"),
@@ -72,8 +75,8 @@ ALIASES = [  # longest first
     ("earnings yield", "earnings_yield"), ("market capitalization", "market_cap"), ("market cap", "market_cap"),
     ("promoter holding", "promoter_holding"), ("insider holding", "promoter_holding"), ("current ratio", "current_ratio"),
     ("book value", "book_value"), ("52 week high", "high_52w"), ("52 week low", "low_52w"), ("ev/ebitda", "ev_ebitda"),
-    ("pe ratio", "pe"), ("p/e", "pe"), ("p/b", "pb"), ("p/s", "ps"), ("d/e", "debt_to_equity"), ("mcap", "market_cap"),
-    ("current price", "price"), ("close", "price"), ("cmp", "price"), ("day change", "change"),
+    ("peg ratio", "peg"), ("loss making", "loss_making"), ("in loss", "loss_making"), ("pe ratio", "pe"), ("p/e", "pe"), ("p/b", "pb"), ("p/s", "ps"), ("d/e", "debt_to_equity"), ("mcap", "market_cap"),
+    ("current price", "price"), ("close", "price"), ("cmp", "price"), ("day change", "change"), ("roce", "roce_3y"),
 ]
 TOKEN = re.compile(r"\s*(>=|<=|!=|>|<|=|\(|\)|-?\d+(?:\.\d+)?|[a-z_0-9]+)")
 
@@ -210,6 +213,13 @@ def latest_day(db: Session) -> date | None:
     return next(d for d, c in days if c >= top * 0.5)
 
 
+def computed_fields(s) -> dict:
+    """loss_making: 1 when the trailing-twelve-month EPS is zero or negative (P/E can't be calculated), 0 when
+    profitable, None when unknown."""
+    eps = getattr(s, "eps_ttm", None) if s is not None else None
+    return {"loss_making": None if eps is None else int(eps <= 0)}
+
+
 def rows_for_day(db: Session, day: date | None) -> list[dict]:
     """One merged dict per active stock: company figures + that day's prices/ratios."""
     daily = {r.symbol: r for r in db.scalars(select(StockDaily).where(StockDaily.day == day))} if day else {}
@@ -219,8 +229,11 @@ def rows_for_day(db: Session, day: date | None) -> list[dict]:
         row = {"symbol": s.symbol, "name": s.name, "sector": s.sector, "industry": s.industry,
                "fundamentals_at": s.fundamentals_at.isoformat() if s.fundamentals_at else None}
         for f, (table, col, _label) in FIELDS.items():
+            if table == "computed":
+                continue
             src = d if table == "daily" else s
             row[f] = getattr(src, col) if src is not None else None
+        row.update(computed_fields(s))
         out.append(row)
     return out
 

@@ -33,7 +33,17 @@ def backtest_config(db: Session, style: Style) -> BacktestConfig:
         default_stop_atr=s["intraday_default_stop_atr" if intraday else "swing_default_stop_atr"],
         default_target_atr=s["intraday_default_target_atr" if intraday else "swing_default_target_atr"],
         max_hold_days=s["swing_max_holding_days"], entry_cutoff=s["intraday_entry_cutoff"], square_off=s["intraday_square_off"],
+        **_trail_cfg(db),
     )
+
+
+def _trail_cfg(db: Session) -> dict:
+    from syena.execution import trailing
+
+    t = trailing.config(db)
+    if not t.get("enabled", True):
+        return {"trail_activate_r": None}
+    return {"trail_activate_r": float(t["equity"]["activate_r"]), "trail_distance_r": float(t["equity"]["distance_r"])}
 
 
 def build(db: Session, text: str, style: Style, run_mode: str, symbols: list[str], timeframe: str, name: str | None) -> tuple[Algo, dict]:

@@ -21,6 +21,7 @@ import PatternLab from "./pages/PatternLab";
 import Review from "./pages/Review";
 import TopNews from "./pages/TopNews";
 import OptionChain from "./pages/OptionChain";
+import Company from "./pages/Company";
 import Stock from "./pages/Stock";
 import SettingsPage from "./pages/Settings";
 import Trades from "./pages/Trades";
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/review" element={<Review />} />
         <Route path="/top-news" element={<TopNews />} />
         <Route path="/options" element={<OptionChain />} />
+        <Route path="/company/:symbol" element={<Company />} />
         <Route path="/evals" element={<Evals />} />
         <Route path="/learning" element={<Learning />} />
         <Route path="/logs" element={<Logs />} />

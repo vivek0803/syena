@@ -47,6 +47,31 @@ def stocks(where: str = "", q: str = "", sort: str = "market_cap", desc: bool = 
 
 
 # ---------------------------------------------------------------- stock pickers (algo builder)
+@router.get("/company/{symbol}")
+def company(symbol: str, db: Session = Depends(get_db)):
+    """A screener.in-style company page."""
+    from syena.market import source
+    from syena.screener import company as co
+
+    try:
+        md = source.get_market_data(db)
+    except Exception:
+        md = None
+    try:
+        return co.page(db, symbol, md)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/fields")
+def fields():
+    """Every field the screen language knows, with its label and aliases (for the query box's suggestions)."""
+    alias = {}
+    for a, c in screens.ALIASES:
+        alias.setdefault(c, []).append(a)
+    return [{"key": k, "label": v[2], "aliases": alias.get(k, [])[:4]} for k, v in screens.FIELDS.items()]
+
+
 @router.get("/search")
 def search(q: str = "", db: Session = Depends(get_db)):
     return lists.search(db, q)
@@ -237,7 +262,7 @@ def data_note(db, sc: Screen) -> str | None:
         used = screens.fields_used(screens.parse_conditions(sc.conditions))
     except screens.ScreenError:
         return None
-    needs_f = any(screens.FIELDS[f][0] == "stock" or f in ("pe", "pb", "ps", "ev_ebitda", "market_cap", "dividend_yield",
+    needs_f = any(screens.FIELDS[f][0] in ("stock", "computed") or f in ("pe", "pb", "ps", "ev_ebitda", "market_cap", "dividend_yield",
                                                             "earnings_yield") for f in used)
     if needs_f and st["with_fundamentals"] < st["stocks"] * 0.5:
         return (f"Only {st['with_fundamentals']} of {st['stocks']} stocks have company figures so far, and P/E, ROE, market cap… "
