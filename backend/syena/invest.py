@@ -149,7 +149,8 @@ def review(db: Session, plan: InvestPlan, md) -> dict:
     if llm.available():
         try:
             res = llm.call(db, "manual_review", "manual_review", tier="analysis", max_tokens=1100,
-                           web_search=int(settings_store.get(db, "ai_web").get("invest") or 0), variables={
+                           web_search=int(settings_store.get(db, "ai_web").get("invest") or 0),
+                           notes=("invest", f"{plan.symbol} {plan.style} {plan.entry_reason or ''} {plan.exit_condition or ''}", [plan.symbol]), variables={
                 "plan": untrusted(json.dumps({**asdict(plan), "entry_price": ref, "target_price": target_px,
                                               "stop_loss_price": stop_px}), "user_plan"),
                 "fundamentals": json.dumps({"pe_from_you": "0 (loss-making: no P/E)" if plan.pe == 0 else plan.pe,
@@ -160,6 +161,8 @@ def review(db: Session, plan: InvestPlan, md) -> dict:
             ai, ai_call_id, model = res.data or ai, res.ai_call_id, res.model
             if res.sources:
                 ai = {**ai, "sources": res.sources}
+            if res.notes:
+                ai = {**ai, "owner_notes": res.notes}
         except Exception as e:
             ai["summary"] = f"AI review failed: {e}"
     suggested = dict(ai.get("suggested") or {})
@@ -178,7 +181,7 @@ def review(db: Session, plan: InvestPlan, md) -> dict:
     db.commit()
     return {"review_id": sig.id, "symbol": sym, "ltp": ltp, "verdict": verdict, "issues": issues + (ai.get("issues") or []),
             "suggested": suggested, "levels": {"entry": ref, "target": target_px, "stop_loss": stop_px}, "summary": ai.get("summary"), "technicals": tech, "news": news[:10], "figures": figs, "sources": ai.get("sources") or [],
-            "lessons": consult.consulted, "similar_trades": consult.similar, "ai_call_id": ai_call_id, "plan": asdict(plan)}
+            "owner_notes": ai.get("owner_notes") or [], "lessons": consult.consulted, "similar_trades": consult.similar, "ai_call_id": ai_call_id, "plan": asdict(plan)}
 
 
 def confirm(db: Session, review_id: int, plan: InvestPlan, md, broker_factory=None) -> Decision:

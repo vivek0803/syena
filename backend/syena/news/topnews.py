@@ -95,7 +95,8 @@ def build(db: Session, md=None, now: datetime | None = None, notify: bool = True
                 market = "; ".join(f"{k} {v.get('change_pct', 0):+.2f}%" for k, v in snap.items() if v) or "unavailable"
             except Exception:
                 pass
-        res = llm.call(db, "top_news", "top_news", tier="analysis", max_tokens=2600, temperature=0, variables={
+        res = llm.call(db, "top_news", "top_news", tier="analysis", max_tokens=2600, temperature=0,
+                       notes=("news", " ".join(it.title for it, _ in cands)[:6000], None), variables={
             "day": day.isoformat(), "market": market,
             "items": untrusted("\n".join(_line(it, info) for it, info in cands), "news"),
         })

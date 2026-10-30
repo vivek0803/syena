@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import NotesUsed from "../components/NotesUsed";
 import Sources from "../components/Sources";
 import { Link } from "react-router-dom";
 import { ErrorNote, Field, Page, Panel, Pill } from "../components/ui";
@@ -104,6 +105,7 @@ export default function Invest() {
               )}
               {review.summary && <p>{review.summary}</p>}
               <Sources items={review.sources} />
+              <NotesUsed items={review.owner_notes} />
               {review.issues.length > 0 && (
                 <ul className="space-y-1.5">{review.issues.map((i: any, k: number) => (
                   <li key={k} className="flex gap-2"><Pill tone={i.severity === "high" ? "loss" : i.severity === "medium" ? "warn" : "mute"}>{i.severity}</Pill><span><b>{i.field}</b>: {i.problem}</span></li>))}</ul>

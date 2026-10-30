@@ -1,3 +1,4 @@
+import NotesUsed from "../components/NotesUsed";
 import Sources from "../components/Sources";
 import StockLink from "../components/StockLink";
 import { useEffect, useMemo, useState } from "react";
@@ -165,6 +166,7 @@ function AiPanel({ id, list }: { id: number; list: any }) {
             {r.summary && <p className="mt-2 text-parch-dim">{r.summary}</p>}
             {r.top_pick_reasons?.length > 0 && <ul className="mt-2 list-disc pl-5 text-sm">{r.top_pick_reasons.map((x: string) => <li key={x}>{x}</li>)}</ul>}
             <Sources items={r.sources} />
+            <NotesUsed items={r.owner_notes} />
           </div>
           <div>
             <div className="mb-2 text-sm font-semibold">Ranking</div>

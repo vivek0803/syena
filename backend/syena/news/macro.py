@@ -37,6 +37,19 @@ def looks_macro(item: NewsItem) -> bool:
     return bool(MACRO_WORDS.search(f"{item.title} {(item.body or '')[:600]}"))
 
 
+def owner_theme(db: Session, item: NewsItem) -> bool:
+    """A non-filing item about a theme the owner wrote a note on (My notes) is also worth mapping."""
+    from syena import notes
+
+    src = (item.source or "").upper()
+    if src.startswith(("NSE", "BSE")) or "nseindia" in (item.url or "") or "bseindia" in (item.url or ""):
+        return False
+    try:
+        return notes.keyword_hit(db, f"{item.title} {(item.body or '')[:600]}")
+    except Exception:
+        return False
+
+
 def industries(db: Session) -> list[str]:
     rows = db.execute(select(Stock.industry, func.count()).where(Stock.active.is_(True), Stock.industry.is_not(None))
                       .group_by(Stock.industry).order_by(func.count().desc())).all()
@@ -66,7 +79,8 @@ def map_impact(db: Session, item: NewsItem) -> list[dict]:
     cfg = settings_store.get(db, "news")
     limit = int(cfg.get("macro_max_stocks") or 5)
     inds = industries(db)
-    res = llm.call(db, "news_macro", "macro_impact", tier="triage", max_tokens=900, variables={
+    res = llm.call(db, "news_macro", "macro_impact", tier="triage", max_tokens=900,
+                   notes=("news", f"{item.title} {(item.body or '')[:800]}", None), variables={
         "industries": ", ".join(inds) or "(industry list not loaded yet)",
         "item": untrusted(item_text(item), "news"),
     })

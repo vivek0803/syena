@@ -166,6 +166,10 @@ class FakeLLM:
                                  {"theme": "weak link", "direction": "positive", "industries": [], "companies": ["TCS"], "why": "?", "confidence": 30}]}
         self.companies = {"companies": []}
         self.top_news = None
+        self.note = {"title": "Cheap crude helps paint makers", "summary": "When crude oil falls, paint makers' margins rise.",
+                     "kind": "macro", "effects": [{"when": "crude oil falls", "then": "paint makers gain", "direction": "positive"}],
+                     "keywords": ["crude", "brent", "oil price", "opec", "paint"], "industries": ["Paints", "Not An Industry"],
+                     "symbols": ["ASIANPAINT", "FAKEPAINT"]}
         self.prompts: list[str] = []
 
     def __call__(self, model, system, user):
@@ -192,6 +196,8 @@ class FakeLLM:
             return _json.dumps(self.companies)
         if system.startswith("You are the evening editor"):
             return _json.dumps(self.top_news or {"top": [], "market_mood": "calm"})
+        if system.startswith("You index a note"):
+            return _json.dumps(self.note)
         if system.startswith("You review a proposed manual"):
             return _json.dumps({"verdict": "caution", "issues": [], "suggested": {}, "summary": "ok"})
         return _json.dumps({"text": "pattern"})

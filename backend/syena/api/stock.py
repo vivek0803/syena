@@ -42,7 +42,7 @@ def stock(symbol: str, db: Session = Depends(get_db)):
             n = db.get(NewsItem, a.news_item_id)
             analyses.append({"id": a.id, "ts": a.created_at.isoformat(), "action": r.get("action"), "confidence": r.get("confidence"),
                              "summary": a.summary, "reasoning": r.get("reasoning"), "risks": r.get("risks") or [],
-                             "event": r.get("event"), "materiality": r.get("materiality"), "materiality_basis": r.get("materiality_basis"),
+                             "event": r.get("event"), "materiality": r.get("materiality"), "materiality_basis": r.get("materiality_basis"), "owner_notes": r.get("owner_notes") or [],
                              "sentiment": a.sentiment, "model": a.model, "prompt_version": a.prompt_version,
                              "news": {"id": n.id, "title": n.title, "url": n.url, "source": n.source} if n else None})
             if len(analyses) >= 10:

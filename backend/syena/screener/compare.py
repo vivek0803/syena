@@ -179,6 +179,8 @@ def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str |
 
     res = llm.call(db, "stock_compare", "stock_compare", tier="premium", max_tokens=1500 + 120 * len(top), temperature=0,
                    web_search=int(settings_store.get(db, "ai_web").get("compare") or 0),
+                   notes=("compare", f"{horizon} {note or ''} " + " ".join(f"{t['symbol']} {t.get('name') or ''} {t.get('industry') or ''}" for t in top),
+                          [t["symbol"] for t in top]),
                    variables={
         "horizon": HORIZONS.get(horizon, HORIZONS["LONG_TERM"]),
         "fields": json.dumps({**{f: FIELDS[f][2] for f in keep}, **TECH_FIELDS}),
@@ -189,6 +191,8 @@ def _ask(db: Session, table: list[dict], scores: dict, horizon: str, note: str |
     data = dict(res.data or {})
     if res.sources:
         data["sources"] = res.sources
+    if res.notes:
+        data["owner_notes"] = res.notes
     return data, res.model
 
 
@@ -202,7 +206,7 @@ def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", 
         raise ValueError("Add at least two stocks to compare.")
     tech = technicals(md, syms, db, live_fetch=LIVE_FETCH) if md is not None else {}
     table = {t["symbol"]: t for t in _table(db, syms, tech)}
-    key = _input_key(table, horizon, note)
+    key = _input_key(table, horizon, note, _notes_version(db))
     prev = wl.ai_result or {}
     if prev.get("input_key") == key and prev.get("top_pick"):
         return {**prev, "reused": True}
@@ -231,6 +235,7 @@ def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", 
     out = {"top_pick": ranking[0]["symbol"], "ranking": ranking, "top_pick_reasons": lst("top_pick_reasons"),
            "risks": lst("risks"), "data_gaps": lst("data_gaps"), "summary": str(ai.get("summary") or "")[:800],
            "sources": [x for x in (ai.get("sources") or []) if isinstance(x, dict)][:10],
+           "owner_notes": ai.get("owner_notes") or [],
            "method": "fixed formula + AI review (max ±10 points)", "rubric": {k: w for k, (w, _) in scoring.RUBRICS[horizon if horizon in scoring.RUBRICS else "LONG_TERM"].items()},
            "horizon": horizon, "model": model, "stocks": list(wl.symbols or []), "note": note or None, "rounds": 1,
            "input_key": key}
@@ -239,11 +244,22 @@ def ai_compare(db: Session, wl: Watchlist, md=None, horizon: str = "LONG_TERM", 
     return out
 
 
-def _input_key(table: dict, horizon: str, note: str | None) -> str:
+def _notes_version(db: Session) -> str:
+    """Changes when the owner adds, edits or pauses a note, so Compare asks the AI again."""
+    from sqlalchemy import func
+
+    from syena.models import OwnerNote
+
+    n, last = db.execute(select(func.count(), func.max(OwnerNote.updated_at)).where(OwnerNote.active.is_(True))).one()
+    return f"{n}:{last}" if n else ""
+
+
+def _input_key(table: dict, horizon: str, note: str | None, notes_version: str = "") -> str:
     import hashlib
 
     rows = [{k: v for k, v in table[s].items() if k != "missing"} for s in sorted(table)]
-    blob = json.dumps({"rows": rows, "horizon": horizon, "note": (note or "").strip().lower(), "prompt": "stock_compare/v3"},
+    blob = json.dumps({"rows": rows, "horizon": horizon, "note": (note or "").strip().lower(), "prompt": "stock_compare/v3",
+                       **({"owner_notes": notes_version} if notes_version else {})},
                       sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:24]
 

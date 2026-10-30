@@ -124,6 +124,8 @@ def review_closed_trade(db: Session, trade: Trade, md=None) -> TradeReview | Non
         path_txt = path[["open", "high", "low", "close"]].round(2).to_csv() if not path.empty else "(unavailable)"
         try:
             res = llm.call(db, "trade_review", "trade_reviewer", tier="review", max_tokens=1800,
+                           notes=("review", f"{trade.stock} {trade.side} {trade.source} {trade.algo_condition or ''} {trade.exit_reason or ''}",
+                                  [(trade.option or {}).get("underlying") or trade.stock]),
                            variables={"record": json.dumps(rec, default=str), "path": path_txt[:6000],
                                       "counterfactuals": json.dumps(cf)})
             data, ai_call_id, model, pv = res.data or {}, res.ai_call_id, res.model, res.prompt_version

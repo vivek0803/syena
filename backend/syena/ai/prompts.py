@@ -312,4 +312,20 @@ TOP_NEWS = Prompt(
     "Date: {day}\nMarket today: {market}\n\nNews items:\n{items}",
 )
 
-ALL = {p.name: p for p in [COMPANY_EXTRACT, TOP_NEWS, ASK_AI, MACRO_IMPACT, MISSED_MOVES, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}
+NOTE_DIGEST = Prompt(
+    "note_digest", "v1",
+    "You index a note the owner of an Indian stock-trading system wrote about something they learned (macroeconomics, "
+    "sectors, companies, trading rules). " + DATA_RULE + " The note is the owner's own view: do not judge it, just "
+    "make it easy to find when related news or questions come up.\n"
+    "Return: a short title (max 8 words); a one-sentence summary in the form 'When X, Y' if it is a cause-effect idea; "
+    "kind (macro, sector, stock, rule or general); the cause-effect links it states (when, then, direction for the "
+    "affected stocks: positive, negative or mixed); 10-25 lowercase keywords and synonyms a related headline might "
+    "use (e.g. crude oil -> crude, brent, oil price, opec, petrol, diesel); the affected industries chosen ONLY from "
+    "the list given; and the NSE symbols of companies it names or clearly means (well-known ones only).\n"
+    "Output ONLY JSON: {\"title\":\"..\",\"summary\":\"..\",\"kind\":\"macro|sector|stock|rule|general\","
+    "\"effects\":[{\"when\":\"..\",\"then\":\"..\",\"direction\":\"positive|negative|mixed\"}],"
+    "\"keywords\":[\"..\"],\"industries\":[\"..\"],\"symbols\":[\"..\"]}",
+    "Industries on NSE: {industries}\n\nThe owner's note:\n{note}",
+)
+
+ALL = {p.name: p for p in [NOTE_DIGEST, COMPANY_EXTRACT, TOP_NEWS, ASK_AI, MACRO_IMPACT, MISSED_MOVES, STOCK_COMPARE, IMAGE_READER, RULE_PARSER, NEWS_TRIAGE, NEWS_ANALYSIS, MANUAL_REVIEW, TRADE_REVIEWER, REASONING_JUDGE, LESSON_NARRATIVE]}

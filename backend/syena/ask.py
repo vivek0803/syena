@@ -126,7 +126,8 @@ def answer(db: Session, question: str, history: list[dict] | None = None, md=Non
     from syena import settings_store
 
     res = llm.call(db, "ask_ai", "ask_ai", tier="premium", max_tokens=1600, temperature=0.2,
-                   web_search=int(settings_store.get(db, "ai_web").get("ask") or 0), variables={
+                   web_search=int(settings_store.get(db, "ai_web").get("ask") or 0),
+                   notes=("ask", q + " " + " ".join(h["content"] for h in hist if h["role"] == "user")[-600:], syms), variables={
         "question": untrusted(q, "user_question"),
         "history": untrusted(convo, "conversation"),
         "context": untrusted("\n\n".join(context), "syena_data"),
@@ -137,4 +138,5 @@ def answer(db: Session, question: str, history: list[dict] | None = None, md=Non
     if not in_scope or not text:
         return {"answer": REFUSAL, "in_scope": False, "symbols": [], "model": res.model}
     return {"answer": text[:6000], "in_scope": True, "symbols": syms, "used_portfolio": want_portfolio, "model": res.model,
-            "cost_usd": res.cost_usd, "sources": res.sources or [], "searches": res.searches}
+            "cost_usd": res.cost_usd, "sources": res.sources or [], "searches": res.searches,
+            "owner_notes": res.notes or []}

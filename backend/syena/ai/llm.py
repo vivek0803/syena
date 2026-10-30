@@ -43,6 +43,7 @@ class LLMResult:
     latency_ms: int
     sources: list | None = None  # [{"title", "url"}] when the model searched the web
     searches: int = 0
+    notes: list | None = None  # owner's notes shown to the AI: [{"id", "title", "influenced"}]
 
 
 CACHE_MIN_CHARS = 4000  # ~1,000+ tokens: below the API's minimum a cache mark does nothing anyway
@@ -193,8 +194,9 @@ def extract_json(text: str) -> dict:
 def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None, model: str | None = None,
          variables: dict | None = None, max_tokens: int = 1200, want_json: bool = True, shadow: bool = False,
          eval_run_id: int | None = None, images: list | None = None, temperature: float | None = None,
-         web_search: int = 0) -> LLMResult:
-    """web_search: let the model search the web up to this many times (0 = only the data given)."""
+         web_search: int = 0, notes: tuple | None = None) -> LLMResult:
+    """web_search: let the model search the web up to this many times (0 = only the data given).
+    notes: (area, text, symbols) to add the owner's related notes (notes.py); skipped for evals and shadow runs."""
     prompt = PROMPTS[prompt_name]
     model = model or (model_for(db, tier) if tier else None)
     if not model:
@@ -205,6 +207,15 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
     system, user = prompt.render(**(variables or {}))
     if web_search:
         system += WEB_NOTE
+    used_notes: list = []
+    if notes and eval_run_id is None and not shadow:
+        try:
+            from syena import notes as owner_notes
+
+            extra, used_notes = owner_notes.block(db, notes[0], notes[1], notes[2] if len(notes) > 2 else None)
+            user += extra  # in the user turn, so the cached system prompt stays the same
+        except Exception as e:
+            log.warning("owner notes unavailable", extra={"error": str(e)})
     be = backend()
     last_err = None
     for attempt in range(2):
@@ -229,7 +240,13 @@ def call(db: Session, purpose: str, prompt_name: str, *, tier: str | None = None
             data = extract_json(text) if want_json else None
             db.add(row)
             db.commit()
-            return LLMResult(text, data, model, prompt.version, row.id, row.cost_usd, row.latency_ms, sources or None, nsearch)
+            noted = None
+            if used_notes:
+                from syena import notes as owner_notes
+
+                said = owner_notes.record(db, used_notes, purpose, row.id, data, str(notes[1])[:200])
+                noted = [{"id": n.id, "title": n.title, "influenced": n.id in said} for n in used_notes]
+            return LLMResult(text, data, model, prompt.version, row.id, row.cost_usd, row.latency_ms, sources or None, nsearch, noted)
         except (LLMBadOutput, json.JSONDecodeError) as e:
             last_err = e
             row.success, row.error = False, f"bad output: {e}"

@@ -15,6 +15,8 @@ from syena.models.intel import (
     NewsAnalysis,
     NewsItem,
     NewsOutcome,
+    NoteUse,
+    OwnerNote,
     TradeReview,
 )
 from syena.models.trading import (

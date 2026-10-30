@@ -256,6 +256,8 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
     web = int(settings_store.get(db, "ai_web").get("news_analysis") or 0) if live else 0
     res = llm.call(db, "news_analysis", "news_analysis", tier=None if model else "analysis", model=model, max_tokens=900,
                    shadow=shadow, eval_run_id=eval_run_id, web_search=web,
+                   notes=("news", f"{symbol}: " + " | ".join(i.title for i in items[:5]) + (f" {macro_note}" if macro_note else "")
+                          + " " + " ".join((i.body or "")[:400] for i in items[:2]), [symbol]),
                    variables={"symbol": symbol, "news": news_txt, "technicals": technicals_brief(tech),
                               "company": _facts_or_note(db, symbol, daily),
                               "context": json.dumps(ctx), "lessons": pretrade.lessons_context(active),
@@ -276,7 +278,7 @@ def analyse(db: Session, symbol: str, items: list[NewsItem], md, as_of: datetime
             "event": d.get("event"), "materiality": d.get("materiality"), "materiality_basis": d.get("materiality_basis"),
             "llm_technicals_agree": d.get("technicals_agree"), "technicals": tech, "context": ctx, "setup": setup,
             "consult": consult, "model": res.model, "prompt_version": res.prompt_version, "ai_call_id": res.ai_call_id,
-            "price": ltp or price, "as_of": as_of.isoformat(), "liquidity": liquidity(db, symbol, daily)}
+            "owner_notes": res.notes, "price": ltp or price, "as_of": as_of.isoformat(), "liquidity": liquidity(db, symbol, daily)}
 
 
 def company_facts(db: Session, symbol: str, daily) -> str:
@@ -775,7 +777,7 @@ def run_cycle(db: Session, md, fetch=sources.fetch_all, broker_factory=None, now
                 for s in t["symbols"]:
                     lst, _ = by_symbol.get(s, ([], None))
                     by_symbol[s] = (lst + [item], t.get("event_type"))
-            elif cfg.get("macro_mapping", True) and macro.looks_macro(item):
+            elif cfg.get("macro_mapping", True) and (macro.looks_macro(item) or macro.owner_theme(db, item)):
                 for o in macro.map_impact(db, item):  # broad news: the stocks it helps or hurts
                     if o["symbol"] not in by_symbol:
                         by_symbol[o["symbol"]] = ([item], "macro")

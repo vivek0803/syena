@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, ReactNode, useEffect, useRef, useState } from "react";
+import NotesUsed from "../components/NotesUsed";
 import Sources from "../components/Sources";
 import { Link, useSearchParams } from "react-router-dom";
 import { ErrorNote, Page } from "../components/ui";
@@ -43,7 +44,7 @@ export default function Ask() {
     setQ(""); setBusy(true); setErr(null);
     try {
       const r = await api<any>("/api/ask", { body: { question, history } });
-      setMsgs((m) => [...m, { role: "assistant", content: r.answer, symbols: r.symbols, refused: !r.in_scope, sources: r.sources }]);
+      setMsgs((m) => [...m, { role: "assistant", content: r.answer, symbols: r.symbols, refused: !r.in_scope, sources: r.sources, owner_notes: r.owner_notes }]);
     } catch (ex) { setErr(ex); } finally { setBusy(false); }
   };
 
@@ -61,6 +62,7 @@ export default function Ask() {
               {m.symbols && m.symbols.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2 text-[12px] text-mute">Used Syena data on {m.symbols.map((s) => <Link key={s} to={`/stock/${s}`} className="text-saffron hover:underline">{s}</Link>)}</div>)}
               {m.role !== "user" && <Sources items={(m as any).sources} />}
+              {m.role !== "user" && <NotesUsed items={(m as any).owner_notes} />}
             </div>
           </div>))}
         {busy && <div className="panel px-4 py-3 text-sm text-mute">Looking at Syena's data and the latest market news…</div>}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { when } from "../lib/format";
+import NotesUsed, { NoteRef } from "./NotesUsed";
 import StockLink from "./StockLink";
 
 export type Verdict = {
@@ -9,6 +10,7 @@ export type Verdict = {
   technicals?: { score?: number | null; reasons?: string[] | null } | null;
   decision?: { id: number; type: string; summary: string; failed?: { name: string; detail?: string } | null } | null;
   news?: { id: number; title: string; url?: string; source?: string } | null;
+  owner_notes?: NoteRef[] | null;
 };
 
 const LOOK: Record<string, { glyph: string; label: string; text: string; ring: string; bar: string; soft: string }> = {
@@ -47,6 +49,7 @@ export default function AiVerdict({ a, threshold, compact = false }: { a: Verdic
             {a.materiality_basis && <span className="text-mute">· {a.materiality_basis}</span>}
           </p>)}
         {a.summary && <p className="text-[15px] leading-relaxed text-parch">{a.summary}</p>}
+        <NotesUsed items={a.owner_notes} />
 
         {a.reasoning && (open ? <p className="text-sm leading-relaxed text-parch-dim">{a.reasoning}</p> : (
           <button type="button" className="text-sm text-saffron hover:underline" onClick={() => setOpen(true)}>Why? Show the reasoning</button>))}

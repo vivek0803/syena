@@ -269,3 +269,41 @@ class IsinMaster(Base):
     name: Mapped[str] = mapped_column(String(255))
     sector: Mapped[str | None] = mapped_column(String(128), nullable=True)
     mcap_bucket: Mapped[str | None] = mapped_column(String(8), nullable=True)  # large|mid|small
+
+
+# ---------------------------------------------------------------- Owner's notes
+class OwnerNote(Base):
+    """Something the owner learned (macro links, sector views, rules of thumb). Syena's AI reads the relevant notes
+    when it analyses news, answers questions, compares stocks, reviews a manual investment or a closed trade."""
+    __tablename__ = "owner_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16), default="general")  # macro | sector | stock | rule | general
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # always given to the AI
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    applies: Mapped[list] = mapped_column(JSON, default=list)  # areas: news, ask, compare, invest, review
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # Syena's one-line reading of it
+    effects: Mapped[list | None] = mapped_column(JSON, nullable=True)  # [{when, then, direction}]
+    keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    sectors: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    symbols: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    digest_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | ai | basic
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class NoteUse(Base):
+    __tablename__ = "note_uses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    note_id: Mapped[int] = mapped_column(ForeignKey("owner_notes.id", ondelete="CASCADE"), index=True)
+    ai_call_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(32))
+    ref: Mapped[str | None] = mapped_column(String(200), nullable=True)  # headline / symbol / question it was used for
+    influenced: Mapped[bool] = mapped_column(Boolean, default=False)  # the AI said the note changed its view
+    ts: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)

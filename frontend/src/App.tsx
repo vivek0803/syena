@@ -20,6 +20,7 @@ import Ask from "./pages/Ask";
 import PatternLab from "./pages/PatternLab";
 import Review from "./pages/Review";
 import TopNews from "./pages/TopNews";
+import Notes from "./pages/Notes";
 import OptionChain from "./pages/OptionChain";
 import Company from "./pages/Company";
 import Stock from "./pages/Stock";
@@ -69,6 +70,7 @@ export default function App() {
         <Route path="/pattern-lab" element={<PatternLab />} />
         <Route path="/review" element={<Review />} />
         <Route path="/top-news" element={<TopNews />} />
+        <Route path="/notes" element={<Notes />} />
         <Route path="/options" element={<OptionChain />} />
         <Route path="/company/:symbol" element={<Company />} />
         <Route path="/evals" element={<Evals />} />

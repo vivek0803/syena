@@ -68,6 +68,8 @@ DEFAULTS: dict[str, Any] = {
     # Live market data for the AI: how many web searches each feature may make per answer (0 = Syena's data only).
     # Each search costs about $0.01 on top of the tokens.
     "ai_web": {"ask": 4, "compare": 4, "invest": 3, "news_analysis": 0},
+    # Your notes (My notes page): learnings Syena's AI reads when they relate to what it is looking at (notes.py)
+    "owner_notes": {"enabled": True, "max_notes": 6, "max_chars": 3500, "ai_digest": True, "min_similarity": 0.3},
     # Trailing stop-loss for news / algo share trades and all option trades (execution/trailing.py)
     "trailing": {"enabled": True, "equity": {"activate_r": 1.0, "distance_r": 1.0},
                  "options": {"activate_pct": 20.0, "trail_pct": 25.0}},
